@@ -10,6 +10,7 @@ Improvements 🙌:
 Bugfix 🐛:
  - Fix dark theme issue on login screen (#1097)
  - Incomplete predicate in RealmCryptoStore#getOutgoingRoomKeyRequest (#1519)
+ - Fix / Old call invite event from pagination can trigger call UX
 
 Translations 🗣:
  -
