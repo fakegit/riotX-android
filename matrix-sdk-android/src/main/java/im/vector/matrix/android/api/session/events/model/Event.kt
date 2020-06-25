@@ -230,3 +230,11 @@ fun Event.isVideoMessage(): Boolean {
         else                      -> false
     }
 }
+
+fun Event.isFileMessage(): Boolean {
+    return getClearType() == EventType.MESSAGE
+            && when (getClearContent()?.toModel<MessageContent>()?.msgType) {
+        MessageType.MSGTYPE_FILE -> true
+        else                      -> false
+    }
+}
