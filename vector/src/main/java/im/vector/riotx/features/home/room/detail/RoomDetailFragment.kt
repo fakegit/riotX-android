@@ -378,6 +378,7 @@ class RoomDetailFragment @Inject constructor(
             }
         }
     }
+
     private fun displayPromptForIntegrationManager() {
         // The Sticker picker widget is not installed yet. Propose the user to install it
         val builder = AlertDialog.Builder(requireContext())
@@ -1342,17 +1343,13 @@ class RoomDetailFragment @Inject constructor(
                 callback = object : MatrixCallback<File> {
                     override fun onSuccess(data: File) {
                         if (isAdded) {
-                            val saved = saveMedia(
+                            saveMedia(
                                     context = requireContext(),
                                     file = data,
                                     title = action.messageContent.body,
-                                    mediaMimeType = getMimeTypeFromUri(requireContext(), data.toUri())
+                                    mediaMimeType = action.messageContent.mimeType ?: getMimeTypeFromUri(requireContext(), data.toUri()),
+                                    notificationUtils = notificationUtils
                             )
-                            if (saved) {
-                                Toast.makeText(requireContext(), R.string.media_file_added_to_gallery, Toast.LENGTH_LONG).show()
-                            } else {
-                                Toast.makeText(requireContext(), R.string.error_adding_media_file_to_gallery, Toast.LENGTH_LONG).show()
-                            }
                         }
                     }
                 }
