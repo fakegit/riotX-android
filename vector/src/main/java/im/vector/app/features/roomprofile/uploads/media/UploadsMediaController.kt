@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roomprofile.uploads.media
@@ -26,12 +17,13 @@ import im.vector.app.core.utils.DimensionConverter
 import im.vector.app.features.media.ImageContentRenderer
 import im.vector.app.features.media.VideoContentRenderer
 import im.vector.app.features.roomprofile.uploads.RoomUploadsViewState
+import org.matrix.android.sdk.api.session.crypto.attachments.toElementToDecrypt
 import org.matrix.android.sdk.api.session.room.model.message.MessageImageContent
 import org.matrix.android.sdk.api.session.room.model.message.MessageType
 import org.matrix.android.sdk.api.session.room.model.message.MessageVideoContent
 import org.matrix.android.sdk.api.session.room.model.message.getFileUrl
+import org.matrix.android.sdk.api.session.room.model.message.getThumbnailUrl
 import org.matrix.android.sdk.api.session.room.uploads.UploadEvent
-import org.matrix.android.sdk.internal.crypto.attachments.toElementToDecrypt
 import javax.inject.Inject
 
 class UploadsMediaController @Inject constructor(
@@ -53,22 +45,19 @@ class UploadsMediaController @Inject constructor(
 
     private val itemSize = dimensionConverter.dpToPx(IMAGE_SIZE_DP)
 
-    init {
-        setData(null)
-    }
-
     override fun buildModels(data: RoomUploadsViewState?) {
         data ?: return
+        val host = this
 
         buildMediaItems(data.mediaEvents)
 
         if (data.hasMore) {
             squareLoadingItem {
                 // Always use a different id, because we can be notified several times of visibility state changed
-                id("loadMore${idx++}")
+                id("loadMore${host.idx++}")
                 onVisibilityStateChanged { _, _, visibilityState ->
                     if (visibilityState == VisibilityState.VISIBLE) {
-                        listener?.loadMore()
+                        host.listener?.loadMore()
                     }
                 }
             }
@@ -76,32 +65,29 @@ class UploadsMediaController @Inject constructor(
     }
 
     private fun buildMediaItems(mediaEvents: List<UploadEvent>) {
+        val host = this
         mediaEvents.forEach { uploadEvent ->
             when (uploadEvent.contentWithAttachmentContent.msgType) {
                 MessageType.MSGTYPE_IMAGE -> {
                     val data = uploadEvent.toImageContentRendererData() ?: return@forEach
                     uploadsImageItem {
                         id(uploadEvent.eventId)
-                        imageContentRenderer(imageContentRenderer)
+                        imageContentRenderer(host.imageContentRenderer)
                         data(data)
-                        listener(object : UploadsImageItem.Listener {
-                            override fun onItemClicked(view: View, data: ImageContentRenderer.Data) {
-                                listener?.onOpenImageClicked(view, data)
-                            }
-                        })
+                        listener {
+                            host.listener?.onOpenImageClicked(it, data)
+                        }
                     }
                 }
                 MessageType.MSGTYPE_VIDEO -> {
                     val data = uploadEvent.toVideoContentRendererData() ?: return@forEach
                     uploadsVideoItem {
                         id(uploadEvent.eventId)
-                        imageContentRenderer(imageContentRenderer)
+                        imageContentRenderer(host.imageContentRenderer)
                         data(data)
-                        listener(object : UploadsVideoItem.Listener {
-                            override fun onItemClicked(view: View, data: VideoContentRenderer.Data) {
-                                listener?.onOpenVideoClicked(view, data)
-                            }
-                        })
+                        listener {
+                            host.listener?.onOpenVideoClicked(it, data)
+                        }
                     }
                 }
             }
@@ -131,7 +117,7 @@ class UploadsMediaController @Inject constructor(
                 eventId = eventId,
                 filename = messageContent.body,
                 mimeType = messageContent.mimeType,
-                url = messageContent.videoInfo?.thumbnailFile?.url ?: messageContent.videoInfo?.thumbnailUrl,
+                url = messageContent.videoInfo?.getThumbnailUrl(),
                 elementToDecrypt = messageContent.videoInfo?.thumbnailFile?.toElementToDecrypt(),
                 height = messageContent.videoInfo?.height,
                 maxHeight = itemSize,

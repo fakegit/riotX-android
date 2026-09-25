@@ -1,67 +1,52 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.settings.push
 
 import com.airbnb.mvrx.Async
-import com.airbnb.mvrx.FragmentViewModelContext
-import com.airbnb.mvrx.MvRxState
-import com.airbnb.mvrx.MvRxViewModelFactory
+import com.airbnb.mvrx.MavericksState
+import com.airbnb.mvrx.MavericksViewModelFactory
 import com.airbnb.mvrx.Uninitialized
-import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
-import im.vector.app.core.extensions.exhaustive
-import im.vector.app.core.platform.EmptyViewEvents
+import dagger.assisted.AssistedInject
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.VectorViewModel
+import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.pushers.Pusher
-import org.matrix.android.sdk.rx.RxSession
+import org.matrix.android.sdk.flow.flow
 
 data class PushGatewayViewState(
         val pushGateways: Async<List<Pusher>> = Uninitialized
-) : MvRxState
+) : MavericksState
 
-class PushGatewaysViewModel @AssistedInject constructor(@Assisted initialState: PushGatewayViewState,
-                                                        private val session: Session)
-    : VectorViewModel<PushGatewayViewState, PushGatewayAction, EmptyViewEvents>(initialState) {
+class PushGatewaysViewModel @AssistedInject constructor(
+        @Assisted initialState: PushGatewayViewState,
+        private val session: Session
+) :
+        VectorViewModel<PushGatewayViewState, PushGatewayAction, PushGatewayViewEvents>(initialState) {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: PushGatewayViewState): PushGatewaysViewModel
+    interface Factory : MavericksAssistedViewModelFactory<PushGatewaysViewModel, PushGatewayViewState> {
+        override fun create(initialState: PushGatewayViewState): PushGatewaysViewModel
     }
 
-    companion object : MvRxViewModelFactory<PushGatewaysViewModel, PushGatewayViewState> {
-
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: PushGatewayViewState): PushGatewaysViewModel? {
-            val fragment: PushGatewaysFragment = (viewModelContext as FragmentViewModelContext).fragment()
-            return fragment.pushGatewaysViewModelFactory.create(state)
-        }
-    }
+    companion object : MavericksViewModelFactory<PushGatewaysViewModel, PushGatewayViewState> by hiltMavericksViewModelFactory()
 
     init {
         observePushers()
         // Force a refresh
-        session.refreshPushers()
+        session.pushersService().refreshPushers()
     }
 
     private fun observePushers() {
-        RxSession(session)
+        session.flow()
                 .livePushers()
                 .execute {
                     copy(pushGateways = it)
@@ -71,10 +56,21 @@ class PushGatewaysViewModel @AssistedInject constructor(@Assisted initialState: 
     override fun handle(action: PushGatewayAction) {
         when (action) {
             is PushGatewayAction.Refresh -> handleRefresh()
-        }.exhaustive
+            is PushGatewayAction.RemovePusher -> removePusher(action.pusher)
+        }
+    }
+
+    private fun removePusher(pusher: Pusher) {
+        viewModelScope.launch {
+            kotlin.runCatching {
+                session.pushersService().removePusher(pusher)
+            }.onFailure {
+                _viewEvents.post(PushGatewayViewEvents.RemovePusherFailed(it))
+            }
+        }
     }
 
     private fun handleRefresh() {
-        session.refreshPushers()
+        session.pushersService().refreshPushers()
     }
 }

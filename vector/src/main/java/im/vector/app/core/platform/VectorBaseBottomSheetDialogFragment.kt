@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.core.platform
 
@@ -25,32 +16,41 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.CallSuper
+import androidx.annotation.FloatRange
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewbinding.ViewBinding
-import com.airbnb.mvrx.MvRx
-import com.airbnb.mvrx.MvRxView
-import com.airbnb.mvrx.MvRxViewId
+import com.airbnb.mvrx.MavericksView
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.jakewharton.rxbinding3.view.clicks
-import im.vector.app.core.di.DaggerScreenComponent
-import im.vector.app.core.di.ScreenComponent
+import dagger.hilt.android.EntryPointAccessors
+import im.vector.app.core.di.ActivityEntryPoint
+import im.vector.app.core.extensions.singletonEntryPoint
+import im.vector.app.core.extensions.toMvRxBundle
 import im.vector.app.core.utils.DimensionConverter
-import io.reactivex.android.schedulers.AndroidSchedulers
-import io.reactivex.disposables.CompositeDisposable
-import io.reactivex.disposables.Disposable
+import im.vector.app.features.analytics.AnalyticsTracker
+import im.vector.app.features.analytics.plan.MobileScreen
+import io.github.hyuwah.draggableviewlib.Utils
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import reactivecircus.flowbinding.android.view.clicks
 import timber.log.Timber
-import java.util.concurrent.TimeUnit
 
 /**
- * Add MvRx capabilities to bottomsheetdialog (like BaseMvRxFragment)
+ * Add Mavericks capabilities, handle DI and bindings.
  */
-abstract class VectorBaseBottomSheetDialogFragment<VB: ViewBinding> : BottomSheetDialogFragment(), MvRxView {
+abstract class VectorBaseBottomSheetDialogFragment<VB : ViewBinding> : BottomSheetDialogFragment(), MavericksView {
+    /* ==========================================================================================
+     * Analytics
+     * ========================================================================================== */
 
-    private val mvrxViewIdProperty = MvRxViewId()
-    final override val mvrxViewId: String by mvrxViewIdProperty
-    private lateinit var screenComponent: ScreenComponent
+    protected var analyticsScreenName: MobileScreen.ScreenName? = null
+
+    protected lateinit var analyticsTracker: AnalyticsTracker
 
     /* ==========================================================================================
      * View
@@ -113,34 +113,29 @@ abstract class VectorBaseBottomSheetDialogFragment<VB: ViewBinding> : BottomShee
 
     @CallSuper
     override fun onDestroyView() {
-        uiDisposables.clear()
         _binding = null
         super.onDestroyView()
     }
 
     @CallSuper
     override fun onDestroy() {
-        uiDisposables.dispose()
         super.onDestroy()
     }
 
     override fun onAttach(context: Context) {
-        screenComponent = DaggerScreenComponent.factory().create(vectorBaseActivity.getVectorComponent(), vectorBaseActivity)
-        viewModelFactory = screenComponent.viewModelFactory()
+        val activityEntryPoint = EntryPointAccessors.fromActivity(vectorBaseActivity, ActivityEntryPoint::class.java)
+        viewModelFactory = activityEntryPoint.viewModelFactory()
+        val singletonEntryPoint = context.singletonEntryPoint()
+        analyticsTracker = singletonEntryPoint.analyticsTracker()
         super.onAttach(context)
-        injectWith(screenComponent)
-    }
-
-    protected open fun injectWith(injector: ScreenComponent) = Unit
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        mvrxViewIdProperty.restoreFrom(savedInstanceState)
-        super.onCreate(savedInstanceState)
     }
 
     override fun onResume() {
         super.onResume()
         Timber.i("onResume BottomSheet ${javaClass.simpleName}")
+        analyticsScreenName?.let {
+            analyticsTracker.screen(MobileScreen(screenName = it))
+        }
     }
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
@@ -154,11 +149,6 @@ abstract class VectorBaseBottomSheetDialogFragment<VB: ViewBinding> : BottomShee
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        mvrxViewIdProperty.saveTo(outState)
-    }
-
     override fun onStart() {
         super.onStart()
         // This ensures that invalidate() is called for static screens that don't
@@ -168,6 +158,17 @@ abstract class VectorBaseBottomSheetDialogFragment<VB: ViewBinding> : BottomShee
 
     @CallSuper
     override fun invalidate() {
+        forceExpandState()
+    }
+
+    protected fun setPeekHeightAsScreenPercentage(@FloatRange(from = 0.0, to = 1.0) percentage: Float) {
+        context?.let {
+            val screenHeight = Utils.getScreenHeight(it)
+            bottomSheetBehavior?.setPeekHeight((screenHeight * percentage).toInt(), true)
+        }
+    }
+
+    protected fun forceExpandState() {
         if (showExpanded) {
             // Force the bottom sheet to be expanded
             bottomSheetBehavior?.state = BottomSheetBehavior.STATE_EXPANDED
@@ -175,18 +176,7 @@ abstract class VectorBaseBottomSheetDialogFragment<VB: ViewBinding> : BottomShee
     }
 
     protected fun setArguments(args: Parcelable? = null) {
-        arguments = args?.let { Bundle().apply { putParcelable(MvRx.KEY_ARG, it) } }
-    }
-
-    /* ==========================================================================================
-     * Disposable
-     * ========================================================================================== */
-
-    private val uiDisposables = CompositeDisposable()
-
-    protected fun Disposable.disposeOnDestroyView(): Disposable {
-        uiDisposables.add(this)
-        return this
+        arguments = args.toMvRxBundle()
     }
 
     /* ==========================================================================================
@@ -195,23 +185,26 @@ abstract class VectorBaseBottomSheetDialogFragment<VB: ViewBinding> : BottomShee
 
     protected fun View.debouncedClicks(onClicked: () -> Unit) {
         clicks()
-                .throttleFirst(300, TimeUnit.MILLISECONDS)
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe { onClicked() }
-                .disposeOnDestroyView()
+                .onEach { onClicked() }
+                .launchIn(viewLifecycleOwner.lifecycleScope)
     }
 
     /* ==========================================================================================
      * ViewEvents
      * ========================================================================================== */
 
-    protected fun <T : VectorViewEvents> VectorViewModel<*, *, T>.observeViewEvents(observer: (T) -> Unit) {
-        viewEvents
-                .observe()
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe {
-                    observer(it)
-                }
-                .disposeOnDestroyView()
+    protected fun <T : VectorViewEvents> VectorViewModel<*, *, T>.observeViewEvents(
+            observer: (T) -> Unit,
+    ) {
+        val tag = this@VectorBaseBottomSheetDialogFragment::class.simpleName.toString()
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                viewEvents
+                        .stream(tag)
+                        .collect {
+                            observer(it)
+                        }
+            }
+        }
     }
 }

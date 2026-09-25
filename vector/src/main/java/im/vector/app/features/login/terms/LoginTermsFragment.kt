@@ -1,17 +1,8 @@
 /*
- * Copyright 2018 New Vector Ltd
+ * Copyright 2018-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.login.terms
@@ -31,7 +22,7 @@ import im.vector.app.features.login.AbstractLoginFragment
 import im.vector.app.features.login.LoginAction
 import im.vector.app.features.login.LoginViewState
 import kotlinx.parcelize.Parcelize
-import org.matrix.android.sdk.internal.auth.registration.LocalizedFlowDataLoginTerms
+import org.matrix.android.sdk.api.auth.data.LocalizedFlowDataLoginTerms
 import javax.inject.Inject
 
 @Parcelize
@@ -40,12 +31,13 @@ data class LoginTermsFragmentArgument(
 ) : Parcelable
 
 /**
- * LoginTermsFragment displays the list of policies the user has to accept
+ * LoginTermsFragment displays the list of policies the user has to accept.
  */
-class LoginTermsFragment @Inject constructor(
-        private val policyController: PolicyController
-) : AbstractLoginFragment<FragmentLoginTermsBinding>(),
+class LoginTermsFragment :
+        AbstractLoginFragment<FragmentLoginTermsBinding>(),
         PolicyController.PolicyControllerListener {
+
+    @Inject lateinit var policyController: PolicyController
 
     private val params: LoginTermsFragmentArgument by args()
 
@@ -73,7 +65,7 @@ class LoginTermsFragment @Inject constructor(
     }
 
     private fun setupViews() {
-        views.loginTermsSubmit.setOnClickListener { submit() }
+        views.loginTermsSubmit.debouncedClicks { submit() }
     }
 
     override fun onDestroyView() {
@@ -112,7 +104,7 @@ class LoginTermsFragment @Inject constructor(
     }
 
     override fun updateWithState(state: LoginViewState) {
-        policyController.homeServer = state.homeServerUrl.toReducedUrl()
+        policyController.homeServer = state.homeServerUrlFromUser.toReducedUrl()
         renderState()
     }
 

@@ -1,26 +1,17 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.widgets
 
 import androidx.annotation.StringRes
 import com.airbnb.mvrx.Async
-import com.airbnb.mvrx.MvRxState
+import com.airbnb.mvrx.MavericksState
 import com.airbnb.mvrx.Uninitialized
-import im.vector.app.R
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.session.widgets.model.Widget
 import org.matrix.android.sdk.api.session.widgets.model.WidgetType
 
@@ -31,12 +22,17 @@ enum class WidgetStatus {
 }
 
 enum class WidgetKind(@StringRes val nameRes: Int, val screenId: String?) {
-    ROOM(R.string.room_widget_activity_title, null),
-    STICKER_PICKER(R.string.title_activity_choose_sticker, WidgetType.StickerPicker.preferred),
-    INTEGRATION_MANAGER(0, null);
+    ROOM(CommonStrings.room_widget_activity_title, null),
+    STICKER_PICKER(CommonStrings.title_activity_choose_sticker, WidgetType.StickerPicker.preferred),
+    INTEGRATION_MANAGER(0, null),
+    ELEMENT_CALL(0, null);
 
     fun isAdmin(): Boolean {
         return this == STICKER_PICKER || this == INTEGRATION_MANAGER
+    }
+
+    fun supportsPictureInPictureMode(): Boolean {
+        return this == ELEMENT_CALL
     }
 }
 
@@ -52,7 +48,7 @@ data class WidgetViewState(
         val widgetName: String = "",
         val canManageWidgets: Boolean = false,
         val asyncWidget: Async<Widget> = Uninitialized
-) : MvRxState {
+) : MavericksState {
 
     constructor(widgetArgs: WidgetArgs) : this(
             widgetKind = widgetArgs.kind,

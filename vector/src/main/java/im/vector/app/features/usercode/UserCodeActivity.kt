@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.usercode
@@ -20,32 +11,37 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.Parcelable
+import android.view.View
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
-import com.airbnb.mvrx.MvRx
+import androidx.fragment.app.FragmentManager
+import com.airbnb.mvrx.Mavericks
 import com.airbnb.mvrx.viewModel
 import com.airbnb.mvrx.withState
-import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
-import im.vector.app.core.extensions.commitTransaction
-import im.vector.app.core.extensions.exhaustive
+import dagger.hilt.android.AndroidEntryPoint
+import im.vector.app.core.extensions.replaceFragment
 import im.vector.app.core.platform.VectorBaseActivity
 import im.vector.app.core.utils.onPermissionDeniedSnackbar
 import im.vector.app.databinding.ActivitySimpleBinding
+import im.vector.app.features.analytics.plan.ViewRoom
 import im.vector.app.features.matrixto.MatrixToBottomSheet
+import im.vector.app.features.matrixto.OriginOfMatrixTo
+import im.vector.app.features.qrcode.QrCodeScannerEvents
+import im.vector.app.features.qrcode.QrCodeScannerFragment
+import im.vector.app.features.qrcode.QrCodeScannerViewModel
+import im.vector.app.features.qrcode.QrScannerArgs
+import im.vector.lib.strings.CommonStrings
 import kotlinx.parcelize.Parcelize
-import javax.inject.Inject
 import kotlin.reflect.KClass
 
+@AndroidEntryPoint
 class UserCodeActivity : VectorBaseActivity<ActivitySimpleBinding>(),
-        UserCodeSharedViewModel.Factory,
         MatrixToBottomSheet.InteractionListener {
 
-    @Inject lateinit var viewModelFactory: UserCodeSharedViewModel.Factory
-
     val sharedViewModel: UserCodeSharedViewModel by viewModel()
+    private val qrViewModel: QrCodeScannerViewModel by viewModel()
 
     @Parcelize
     data class Args(
@@ -56,75 +52,114 @@ class UserCodeActivity : VectorBaseActivity<ActivitySimpleBinding>(),
 
     override fun getCoordinatorLayout() = views.coordinatorLayout
 
-    override fun injectWith(injector: ScreenComponent) {
-        injector.inject(this)
+    override val rootView: View
+        get() = views.coordinatorLayout
+
+    private val fragmentLifecycleCallbacks = object : FragmentManager.FragmentLifecycleCallbacks() {
+        override fun onFragmentResumed(fm: FragmentManager, f: Fragment) {
+            if (f is MatrixToBottomSheet) {
+                f.interactionListener = this@UserCodeActivity
+            }
+            super.onFragmentResumed(fm, f)
+        }
+
+        override fun onFragmentPaused(fm: FragmentManager, f: Fragment) {
+            if (f is MatrixToBottomSheet) {
+                f.interactionListener = null
+            }
+            super.onFragmentPaused(fm, f)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        supportFragmentManager.registerFragmentLifecycleCallbacks(fragmentLifecycleCallbacks, false)
 
         if (isFirstCreation()) {
             // should be there early for shared element transition
             showFragment(ShowUserCodeFragment::class, Bundle.EMPTY)
         }
 
-        sharedViewModel.selectSubscribe(this, UserCodeState::mode) { mode ->
+        sharedViewModel.onEach(UserCodeState::mode) { mode ->
             when (mode) {
-                UserCodeState.Mode.SHOW      -> showFragment(ShowUserCodeFragment::class, Bundle.EMPTY)
-                UserCodeState.Mode.SCAN      -> showFragment(ScanUserCodeFragment::class, Bundle.EMPTY)
+                UserCodeState.Mode.SHOW -> showFragment(ShowUserCodeFragment::class)
+                UserCodeState.Mode.SCAN -> {
+                    val args = QrScannerArgs(showExtraButtons = true, CommonStrings.user_code_scan)
+                    showFragment(QrCodeScannerFragment::class, args)
+                }
                 is UserCodeState.Mode.RESULT -> {
-                    showFragment(ShowUserCodeFragment::class, Bundle.EMPTY)
-                    MatrixToBottomSheet.withLink(mode.rawLink, this).show(supportFragmentManager, "MatrixToBottomSheet")
+                    showFragment(ShowUserCodeFragment::class)
+                    MatrixToBottomSheet.withLink(mode.rawLink, OriginOfMatrixTo.USER_CODE).show(supportFragmentManager, "MatrixToBottomSheet")
                 }
             }
         }
 
         sharedViewModel.observeViewEvents {
             when (it) {
-                UserCodeShareViewEvents.Dismiss                    -> ActivityCompat.finishAfterTransition(this)
-                UserCodeShareViewEvents.ShowWaitingScreen          -> views.simpleActivityWaitingView.isVisible = true
-                UserCodeShareViewEvents.HideWaitingScreen          -> views.simpleActivityWaitingView.isVisible = false
-                is UserCodeShareViewEvents.ToastMessage            -> Toast.makeText(this, it.message, Toast.LENGTH_LONG).show()
-                is UserCodeShareViewEvents.NavigateToRoom          -> navigator.openRoom(this, it.roomId)
-                UserCodeShareViewEvents.CameraPermissionNotGranted -> onPermissionDeniedSnackbar(R.string.permissions_denied_qr_code)
-                else                                               -> {
+                UserCodeShareViewEvents.Dismiss -> ActivityCompat.finishAfterTransition(this)
+                UserCodeShareViewEvents.ShowWaitingScreen -> views.simpleActivityWaitingView.isVisible = true
+                UserCodeShareViewEvents.HideWaitingScreen -> views.simpleActivityWaitingView.isVisible = false
+                is UserCodeShareViewEvents.ToastMessage -> Toast.makeText(this, it.message, Toast.LENGTH_LONG).show()
+                is UserCodeShareViewEvents.NavigateToRoom -> navigator.openRoom(this, it.roomId)
+                is UserCodeShareViewEvents.CameraPermissionNotGranted -> {
+                    if (it.deniedPermanently) {
+                        onPermissionDeniedSnackbar(CommonStrings.permissions_denied_qr_code)
+                    }
+                }
+                else -> {
+                }
+            }
+        }
+
+        qrViewModel.observeViewEvents {
+            when (it) {
+                is QrCodeScannerEvents.CodeParsed -> {
+                    sharedViewModel.handle(UserCodeActions.DecodedQRCode(it.result))
+                }
+                QrCodeScannerEvents.SwitchMode -> {
+                    sharedViewModel.handle(UserCodeActions.SwitchMode(UserCodeState.Mode.SHOW))
+                }
+                is QrCodeScannerEvents.ParseFailed -> {
+                    Toast.makeText(this, CommonStrings.qr_code_not_scanned, Toast.LENGTH_SHORT).show()
+                    finish()
                 }
             }
         }
     }
 
-    private fun showFragment(fragmentClass: KClass<out Fragment>, bundle: Bundle) {
+    override fun onDestroy() {
+        supportFragmentManager.unregisterFragmentLifecycleCallbacks(fragmentLifecycleCallbacks)
+        super.onDestroy()
+    }
+
+    private fun showFragment(fragmentClass: KClass<out Fragment>, params: Parcelable? = null) {
         if (supportFragmentManager.findFragmentByTag(fragmentClass.simpleName) == null) {
-            supportFragmentManager.commitTransaction {
-                setCustomAnimations(R.anim.fade_in, R.anim.fade_out, R.anim.fade_in, R.anim.fade_out)
-                replace(R.id.simpleFragmentContainer,
-                        fragmentClass.java,
-                        bundle,
-                        fragmentClass.simpleName
-                )
-            }
+            replaceFragment(views.simpleFragmentContainer, fragmentClass.java, params, fragmentClass.simpleName, useCustomAnimation = true)
         }
     }
 
-    override fun navigateToRoom(roomId: String) {
-        navigator.openRoom(this, roomId)
+    override fun mxToBottomSheetNavigateToRoom(roomId: String, trigger: ViewRoom.Trigger?) {
+        navigator.openRoom(this, roomId, trigger = trigger)
     }
 
+    override fun mxToBottomSheetSwitchToSpace(spaceId: String) {}
+
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onBackPressed() = withState(sharedViewModel) {
         when (it.mode) {
-            UserCodeState.Mode.SHOW -> super.onBackPressed()
+            UserCodeState.Mode.SHOW -> {
+                @Suppress("DEPRECATION")
+                super.onBackPressed()
+            }
             is UserCodeState.Mode.RESULT,
             UserCodeState.Mode.SCAN -> sharedViewModel.handle(UserCodeActions.SwitchMode(UserCodeState.Mode.SHOW))
-        }.exhaustive
+        }
     }
-
-    override fun create(initialState: UserCodeState) =
-            viewModelFactory.create(initialState)
 
     companion object {
         fun newIntent(context: Context, userId: String): Intent {
             return Intent(context, UserCodeActivity::class.java).apply {
-                putExtra(MvRx.KEY_ARG, Args(userId))
+                putExtra(Mavericks.KEY_ARG, Args(userId))
             }
         }
     }

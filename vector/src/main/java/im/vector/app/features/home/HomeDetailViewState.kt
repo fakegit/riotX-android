@@ -1,33 +1,27 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home
 
-import arrow.core.Option
+import androidx.annotation.StringRes
 import com.airbnb.mvrx.Async
-import com.airbnb.mvrx.MvRxState
+import com.airbnb.mvrx.MavericksState
 import com.airbnb.mvrx.Uninitialized
-import org.matrix.android.sdk.api.session.group.model.GroupSummary
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.session.room.model.RoomSummary
+import org.matrix.android.sdk.api.session.sync.SyncRequestState
 import org.matrix.android.sdk.api.session.sync.SyncState
+import org.matrix.android.sdk.api.util.MatrixItem
 
 data class HomeDetailViewState(
-        val groupSummary: Option<GroupSummary> = Option.empty(),
+        val selectedSpace: RoomSummary? = null,
+        val myMatrixItem: MatrixItem? = null,
         val asyncRooms: Async<List<RoomSummary>> = Uninitialized,
-        val displayMode: RoomListDisplayMode = RoomListDisplayMode.PEOPLE,
+        val currentTab: HomeTab = HomeTab.RoomList(RoomListDisplayMode.PEOPLE),
         val notificationCountCatchup: Int = 0,
         val notificationHighlightCatchup: Boolean = false,
         val notificationCountPeople: Int = 0,
@@ -35,5 +29,18 @@ data class HomeDetailViewState(
         val notificationCountRooms: Int = 0,
         val notificationHighlightRooms: Boolean = false,
         val hasUnreadMessages: Boolean = false,
-        val syncState: SyncState = SyncState.Idle
-) : MvRxState
+        val syncState: SyncState? = null,
+        val incrementalSyncRequestState: SyncRequestState.IncrementalSyncRequestState? = null,
+        val pushCounter: Int = 0,
+        val pstnSupportFlag: Boolean = false,
+        val forceDialPadTab: Boolean = false,
+        // Set to false by default to avoid glitch
+        val showVerifyDeviceBanner: Boolean = false,
+) : MavericksState {
+    val showDialPadTab = forceDialPadTab || pstnSupportFlag
+}
+
+sealed class HomeTab(@StringRes val titleRes: Int) {
+    data class RoomList(val displayMode: RoomListDisplayMode) : HomeTab(displayMode.titleRes)
+    object DialPad : HomeTab(CommonStrings.call_dial_pad_title)
+}

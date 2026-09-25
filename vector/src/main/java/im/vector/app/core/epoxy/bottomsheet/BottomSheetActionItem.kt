@@ -1,18 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.core.epoxy.bottomsheet
 
@@ -30,15 +20,17 @@ import androidx.core.widget.ImageViewCompat
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
 import im.vector.app.R
+import im.vector.app.core.epoxy.ClickListener
 import im.vector.app.core.epoxy.VectorEpoxyHolder
 import im.vector.app.core.epoxy.VectorEpoxyModel
+import im.vector.app.core.epoxy.onClick
 import im.vector.app.features.themes.ThemeUtils
 
 /**
  * A action for bottom sheet.
  */
-@EpoxyModelClass(layout = R.layout.item_bottom_sheet_action)
-abstract class BottomSheetActionItem : VectorEpoxyModel<BottomSheetActionItem.Holder>() {
+@EpoxyModelClass
+abstract class BottomSheetActionItem : VectorEpoxyModel<BottomSheetActionItem.Holder>(R.layout.item_bottom_sheet_action) {
 
     @EpoxyAttribute
     @DrawableRes
@@ -70,18 +62,19 @@ abstract class BottomSheetActionItem : VectorEpoxyModel<BottomSheetActionItem.Ho
     var destructive = false
 
     @EpoxyAttribute
-    lateinit var listener: View.OnClickListener
+    var showBetaLabel = false
+
+    @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
+    lateinit var listener: ClickListener
 
     override fun bind(holder: Holder) {
         super.bind(holder)
-        holder.view.setOnClickListener {
-            listener.onClick(it)
-        }
+        holder.view.onClick(listener)
         holder.startSpace.isVisible = subMenuItem
         val tintColor = if (destructive) {
-            ContextCompat.getColor(holder.view.context, R.color.riotx_notice)
+            ThemeUtils.getColor(holder.view.context, com.google.android.material.R.attr.colorError)
         } else {
-            ThemeUtils.getColor(holder.view.context, R.attr.riotx_text_secondary)
+            ThemeUtils.getColor(holder.view.context, im.vector.lib.ui.styles.R.attr.vctr_content_secondary)
         }
         holder.icon.isVisible = showIcon
         holder.icon.setImageResource(iconRes)
@@ -95,9 +88,9 @@ abstract class BottomSheetActionItem : VectorEpoxyModel<BottomSheetActionItem.Ho
         holder.selected.isInvisible = !selected
         if (showExpand) {
             val expandDrawable = if (expanded) {
-                ContextCompat.getDrawable(holder.view.context, R.drawable.ic_material_expand_less_black)
+                ContextCompat.getDrawable(holder.view.context, R.drawable.ic_expand_less)
             } else {
-                ContextCompat.getDrawable(holder.view.context, R.drawable.ic_material_expand_more_black)
+                ContextCompat.getDrawable(holder.view.context, R.drawable.ic_expand_more)
             }
             expandDrawable?.also {
                 DrawableCompat.setTint(it, tintColor)
@@ -106,6 +99,7 @@ abstract class BottomSheetActionItem : VectorEpoxyModel<BottomSheetActionItem.Ho
         } else {
             holder.text.setCompoundDrawablesWithIntrinsicBounds(null, null, null, null)
         }
+        holder.betaLabel.isVisible = showBetaLabel
     }
 
     class Holder : VectorEpoxyHolder() {
@@ -113,5 +107,6 @@ abstract class BottomSheetActionItem : VectorEpoxyModel<BottomSheetActionItem.Ho
         val icon by bind<ImageView>(R.id.actionIcon)
         val text by bind<TextView>(R.id.actionTitle)
         val selected by bind<ImageView>(R.id.actionSelected)
+        val betaLabel by bind<TextView>(R.id.actionBetaTextView)
     }
 }

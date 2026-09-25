@@ -1,31 +1,19 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.settings.locale
 
-import androidx.lifecycle.viewModelScope
-import com.airbnb.mvrx.ActivityViewModelContext
-import com.airbnb.mvrx.FragmentViewModelContext
-import com.airbnb.mvrx.MvRxViewModelFactory
+import com.airbnb.mvrx.MavericksViewModelFactory
 import com.airbnb.mvrx.Success
-import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
-import im.vector.app.core.extensions.exhaustive
+import dagger.assisted.AssistedInject
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.VectorViewModel
 import im.vector.app.features.configuration.VectorConfiguration
 import im.vector.app.features.settings.VectorLocale
@@ -33,17 +21,23 @@ import kotlinx.coroutines.launch
 
 class LocalePickerViewModel @AssistedInject constructor(
         @Assisted initialState: LocalePickerViewState,
-        private val vectorConfiguration: VectorConfiguration
+        private val vectorConfiguration: VectorConfiguration,
+        private val vectorLocale: VectorLocale,
 ) : VectorViewModel<LocalePickerViewState, LocalePickerAction, LocalePickerViewEvents>(initialState) {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: LocalePickerViewState): LocalePickerViewModel
+    interface Factory : MavericksAssistedViewModelFactory<LocalePickerViewModel, LocalePickerViewState> {
+        override fun create(initialState: LocalePickerViewState): LocalePickerViewModel
     }
 
     init {
+        setState {
+            copy(
+                    currentLocale = vectorLocale.applicationLocale
+            )
+        }
         viewModelScope.launch {
-            val result = VectorLocale.getSupportedLocales()
+            val result = vectorLocale.getSupportedLocales()
 
             setState {
                 copy(
@@ -53,26 +47,16 @@ class LocalePickerViewModel @AssistedInject constructor(
         }
     }
 
-    companion object : MvRxViewModelFactory<LocalePickerViewModel, LocalePickerViewState> {
-
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: LocalePickerViewState): LocalePickerViewModel? {
-            val factory = when (viewModelContext) {
-                is FragmentViewModelContext -> viewModelContext.fragment as? Factory
-                is ActivityViewModelContext -> viewModelContext.activity as? Factory
-            }
-            return factory?.create(state) ?: error("You should let your activity/fragment implements Factory interface")
-        }
-    }
+    companion object : MavericksViewModelFactory<LocalePickerViewModel, LocalePickerViewState> by hiltMavericksViewModelFactory()
 
     override fun handle(action: LocalePickerAction) {
         when (action) {
             is LocalePickerAction.SelectLocale -> handleSelectLocale(action)
-        }.exhaustive
+        }
     }
 
     private fun handleSelectLocale(action: LocalePickerAction.SelectLocale) {
-        VectorLocale.saveApplicationLocale(action.locale)
+        vectorLocale.saveApplicationLocale(action.locale)
         vectorConfiguration.applyToApplicationContext()
         _viewEvents.post(LocalePickerViewEvents.RestartActivity)
     }

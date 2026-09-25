@@ -1,27 +1,21 @@
 /*
- * Copyright (c) 2021 New Vector Ltd
+ * Copyright 2021-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.core.ui.views
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.util.AttributeSet
 import androidx.appcompat.widget.AppCompatImageView
-import androidx.core.view.isVisible
+import androidx.core.view.isInvisible
 import im.vector.app.R
 import im.vector.app.features.home.room.detail.timeline.item.SendStateDecoration
+import im.vector.app.features.themes.ThemeUtils
+import im.vector.lib.strings.CommonStrings
 
 class SendStateImageView @JvmOverloads constructor(
         context: Context,
@@ -36,25 +30,28 @@ class SendStateImageView @JvmOverloads constructor(
     }
 
     fun render(sendState: SendStateDecoration) {
-        isVisible = when (sendState) {
+        isInvisible = when (sendState) {
             SendStateDecoration.SENDING_NON_MEDIA -> {
                 setImageResource(R.drawable.ic_sending_message)
-                contentDescription = context.getString(R.string.event_status_a11y_sending)
-                true
+                imageTintList = ColorStateList.valueOf(ThemeUtils.getColor(context, im.vector.lib.ui.styles.R.attr.vctr_content_tertiary))
+                contentDescription = context.getString(CommonStrings.event_status_a11y_sending)
+                false
             }
-            SendStateDecoration.SENT              -> {
+            SendStateDecoration.SENT -> {
                 setImageResource(R.drawable.ic_message_sent)
-                contentDescription = context.getString(R.string.event_status_a11y_sent)
-                true
+                imageTintList = ColorStateList.valueOf(ThemeUtils.getColor(context, im.vector.lib.ui.styles.R.attr.vctr_content_tertiary))
+                contentDescription = context.getString(CommonStrings.event_status_a11y_sent)
+                false
             }
-            SendStateDecoration.FAILED            -> {
+            SendStateDecoration.FAILED -> {
                 setImageResource(R.drawable.ic_sending_message_failed)
-                contentDescription = context.getString(R.string.event_status_a11y_failed)
-                true
+                imageTintList = null
+                contentDescription = context.getString(CommonStrings.event_status_a11y_failed)
+                false
             }
             SendStateDecoration.SENDING_MEDIA,
-            SendStateDecoration.NONE              -> {
-                false
+            SendStateDecoration.NONE -> {
+                true
             }
         }
     }

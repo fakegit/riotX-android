@@ -1,23 +1,14 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.call
 
 import com.airbnb.mvrx.Async
-import com.airbnb.mvrx.MvRxState
+import com.airbnb.mvrx.MavericksState
 import com.airbnb.mvrx.Uninitialized
 import im.vector.app.features.call.audio.CallAudioManager
 import org.matrix.android.sdk.api.session.call.CallState
@@ -35,23 +26,31 @@ data class VectorCallViewState(
         val isHD: Boolean = false,
         val isFrontCamera: Boolean = true,
         val canSwitchCamera: Boolean = true,
-        val device: CallAudioManager.Device = CallAudioManager.Device.PHONE,
+        val device: CallAudioManager.Device = CallAudioManager.Device.Phone,
         val availableDevices: Set<CallAudioManager.Device> = emptySet(),
         val callState: Async<CallState> = Uninitialized,
         val otherKnownCallInfo: CallInfo? = null,
-        val callInfo: CallInfo = CallInfo(callId),
+        val callInfo: CallInfo? = null,
         val formattedDuration: String = "",
-        val canOpponentBeTransferred: Boolean = false
-) : MvRxState {
+        val canOpponentBeTransferred: Boolean = false,
+        val transferee: TransfereeState = TransfereeState.NoTransferee,
+        val isSharingScreen: Boolean = false
+) : MavericksState {
+
+    sealed class TransfereeState {
+        object NoTransferee : TransfereeState()
+        data class KnownTransferee(val name: String) : TransfereeState()
+        object UnknownTransferee : TransfereeState()
+    }
 
     data class CallInfo(
             val callId: String,
-            val otherUserItem: MatrixItem? = null
+            val opponentUserItem: MatrixItem? = null
     )
 
-    constructor(callArgs: CallArgs): this(
+    constructor(callArgs: CallArgs) : this(
             callId = callArgs.callId,
-            roomId = callArgs.roomId,
+            roomId = callArgs.signalingRoomId,
             isVideoCall = callArgs.isVideoCall
     )
 }

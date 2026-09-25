@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.core.ui.views
@@ -21,12 +12,12 @@ import android.content.res.ColorStateList
 import android.graphics.drawable.Drawable
 import android.util.AttributeSet
 import android.widget.FrameLayout
-import androidx.core.content.ContextCompat
 import androidx.core.content.withStyledAttributes
 import androidx.core.view.isGone
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import im.vector.app.R
+import im.vector.app.core.extensions.setDrawableOrHide
 import im.vector.app.core.extensions.setTextOrHide
 import im.vector.app.databinding.ViewBottomSheetActionButtonBinding
 import im.vector.app.features.themes.ThemeUtils
@@ -37,6 +28,10 @@ class BottomSheetActionButton @JvmOverloads constructor(
         defStyleAttr: Int = 0
 ) : FrameLayout(context, attrs, defStyleAttr) {
     val views: ViewBottomSheetActionButtonBinding
+
+    override fun setOnClickListener(l: OnClickListener?) {
+        views.bottomSheetActionClickableZone.setOnClickListener(l)
+    }
 
     var title: String? = null
         set(value) {
@@ -81,7 +76,7 @@ class BottomSheetActionButton @JvmOverloads constructor(
     var rightIcon: Drawable? = null
         set(value) {
             field = value
-            views.bottomSheetActionIcon.setImageDrawable(value)
+            views.bottomSheetActionIcon.setDrawableOrHide(value)
         }
 
     var tint: Int? = null
@@ -96,20 +91,31 @@ class BottomSheetActionButton @JvmOverloads constructor(
             value?.let { views.bottomSheetActionTitle.setTextColor(it) }
         }
 
+    var isBetaAction: Boolean? = null
+        set(value) {
+            field = value
+            views.bottomSheetActionBeta.isVisible = field ?: false
+        }
+
     init {
         inflate(context, R.layout.view_bottom_sheet_action_button, this)
         views = ViewBottomSheetActionButtonBinding.bind(this)
 
-        context.withStyledAttributes(attrs, R.styleable.BottomSheetActionButton) {
-            title = getString(R.styleable.BottomSheetActionButton_actionTitle) ?: ""
-            subTitle = getString(R.styleable.BottomSheetActionButton_actionDescription) ?: ""
-            forceStartPadding = getBoolean(R.styleable.BottomSheetActionButton_forceStartPadding, false)
-            leftIcon = getDrawable(R.styleable.BottomSheetActionButton_leftIcon)
+        context.withStyledAttributes(attrs, im.vector.lib.ui.styles.R.styleable.BottomSheetActionButton) {
+            title = getString(im.vector.lib.ui.styles.R.styleable.BottomSheetActionButton_actionTitle) ?: ""
+            subTitle = getString(im.vector.lib.ui.styles.R.styleable.BottomSheetActionButton_actionDescription) ?: ""
+            forceStartPadding = getBoolean(im.vector.lib.ui.styles.R.styleable.BottomSheetActionButton_forceStartPadding, false)
+            leftIcon = getDrawable(im.vector.lib.ui.styles.R.styleable.BottomSheetActionButton_leftIcon)
 
-            rightIcon = getDrawable(R.styleable.BottomSheetActionButton_rightIcon)
+            rightIcon = getDrawable(im.vector.lib.ui.styles.R.styleable.BottomSheetActionButton_rightIcon)
 
-            tint = getColor(R.styleable.BottomSheetActionButton_tint, ThemeUtils.getColor(context, android.R.attr.textColor))
-            titleTextColor = getColor(R.styleable.BottomSheetActionButton_titleTextColor, ContextCompat.getColor(context, R.color.riotx_accent))
+            tint = getColor(im.vector.lib.ui.styles.R.styleable.BottomSheetActionButton_tint, ThemeUtils.getColor(context, android.R.attr.textColor))
+            titleTextColor = getColor(
+                    im.vector.lib.ui.styles.R.styleable.BottomSheetActionButton_titleTextColor,
+                    ThemeUtils.getColor(context, com.google.android.material.R.attr.colorPrimary)
+            )
+
+            isBetaAction = getBoolean(im.vector.lib.ui.styles.R.styleable.BottomSheetActionButton_betaAction, false)
         }
     }
 }

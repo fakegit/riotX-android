@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.discovery
 
@@ -19,17 +10,17 @@ import android.widget.Button
 import androidx.annotation.StringRes
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
-import com.airbnb.epoxy.EpoxyModelWithHolder
 import im.vector.app.R
 import im.vector.app.core.epoxy.ClickListener
 import im.vector.app.core.epoxy.VectorEpoxyHolder
+import im.vector.app.core.epoxy.VectorEpoxyModel
 import im.vector.app.core.epoxy.attributes.ButtonStyle
 import im.vector.app.core.epoxy.onClick
 import im.vector.app.core.extensions.setTextOrHide
 import im.vector.app.core.resources.ColorProvider
 
-@EpoxyModelClass(layout = R.layout.item_settings_button)
-abstract class SettingsButtonItem : EpoxyModelWithHolder<SettingsButtonItem.Holder>() {
+@EpoxyModelClass
+abstract class SettingsButtonItem : VectorEpoxyModel<SettingsButtonItem.Holder>(R.layout.item_settings_button) {
 
     @EpoxyAttribute
     lateinit var colorProvider: ColorProvider
@@ -44,7 +35,7 @@ abstract class SettingsButtonItem : EpoxyModelWithHolder<SettingsButtonItem.Hold
     @EpoxyAttribute
     var buttonStyle: ButtonStyle = ButtonStyle.POSITIVE
 
-    @EpoxyAttribute
+    @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
     var buttonClickListener: ClickListener? = null
 
     override fun bind(holder: Holder) {
@@ -56,11 +47,11 @@ abstract class SettingsButtonItem : EpoxyModelWithHolder<SettingsButtonItem.Hold
         }
 
         when (buttonStyle) {
-            ButtonStyle.POSITIVE    -> {
-                holder.button.setTextColor(colorProvider.getColor(R.color.riotx_accent))
+            ButtonStyle.POSITIVE -> {
+                holder.button.setTextColor(colorProvider.getColorFromAttribute(com.google.android.material.R.attr.colorPrimary))
             }
             ButtonStyle.DESTRUCTIVE -> {
-                holder.button.setTextColor(colorProvider.getColor(R.color.riotx_destructive_accent))
+                holder.button.setTextColor(colorProvider.getColorFromAttribute(com.google.android.material.R.attr.colorError))
             }
         }
 

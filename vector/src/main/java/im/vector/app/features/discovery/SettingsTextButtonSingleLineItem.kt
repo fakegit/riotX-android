@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.discovery
 
@@ -25,23 +16,22 @@ import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
-import com.airbnb.epoxy.EpoxyModelWithHolder
 import com.google.android.material.switchmaterial.SwitchMaterial
 import im.vector.app.R
 import im.vector.app.core.epoxy.ClickListener
 import im.vector.app.core.epoxy.VectorEpoxyHolder
+import im.vector.app.core.epoxy.VectorEpoxyModel
 import im.vector.app.core.epoxy.attributes.ButtonStyle
 import im.vector.app.core.epoxy.attributes.ButtonType
 import im.vector.app.core.epoxy.attributes.IconMode
 import im.vector.app.core.epoxy.onClick
-import im.vector.app.core.extensions.exhaustive
 import im.vector.app.core.extensions.setTextOrHide
 import im.vector.app.core.resources.ColorProvider
 import im.vector.app.core.resources.StringProvider
 import im.vector.app.features.themes.ThemeUtils
 
-@EpoxyModelClass(layout = R.layout.item_settings_button_single_line)
-abstract class SettingsTextButtonSingleLineItem : EpoxyModelWithHolder<SettingsTextButtonSingleLineItem.Holder>() {
+@EpoxyModelClass
+abstract class SettingsTextButtonSingleLineItem : VectorEpoxyModel<SettingsTextButtonSingleLineItem.Holder>(R.layout.item_settings_button_single_line) {
 
     @EpoxyAttribute
     lateinit var colorProvider: ColorProvider
@@ -78,7 +68,7 @@ abstract class SettingsTextButtonSingleLineItem : EpoxyModelWithHolder<SettingsT
     @EpoxyAttribute
     var checked: Boolean? = null
 
-    @EpoxyAttribute
+    @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
     var buttonClickListener: ClickListener? = null
 
     @EpoxyAttribute
@@ -112,20 +102,20 @@ abstract class SettingsTextButtonSingleLineItem : EpoxyModelWithHolder<SettingsT
                     holder.mainButton.isVisible = false
                     holder.switchButton.isVisible = false
                 }
-                ButtonType.NORMAL    -> {
+                ButtonType.NORMAL -> {
                     holder.mainButton.isVisible = true
                     holder.switchButton.isVisible = false
                     when (buttonStyle) {
-                        ButtonStyle.POSITIVE    -> {
-                            holder.mainButton.setTextColor(colorProvider.getColorFromAttribute(R.attr.colorAccent))
+                        ButtonStyle.POSITIVE -> {
+                            holder.mainButton.setTextColor(colorProvider.getColorFromAttribute(com.google.android.material.R.attr.colorPrimary))
                         }
                         ButtonStyle.DESTRUCTIVE -> {
-                            holder.mainButton.setTextColor(colorProvider.getColor(R.color.vector_error_color))
+                            holder.mainButton.setTextColor(colorProvider.getColorFromAttribute(com.google.android.material.R.attr.colorError))
                         }
-                    }.exhaustive
+                    }
                     holder.mainButton.onClick(buttonClickListener)
                 }
-                ButtonType.SWITCH    -> {
+                ButtonType.SWITCH -> {
                     holder.mainButton.isVisible = false
                     holder.switchButton.isVisible = true
                     // set to null before changing the state
@@ -133,22 +123,22 @@ abstract class SettingsTextButtonSingleLineItem : EpoxyModelWithHolder<SettingsT
                     checked?.let { holder.switchButton.isChecked = it }
                     holder.switchButton.setOnCheckedChangeListener(switchChangeListener)
                 }
-            }.exhaustive
+            }
         }
 
         when (iconMode) {
-            IconMode.NONE  -> {
+            IconMode.NONE -> {
                 holder.textView.setCompoundDrawables(null, null, null, null)
             }
-            IconMode.INFO  -> {
-                val errorColor = colorProvider.getColor(R.color.notification_accent_color)
+            IconMode.INFO -> {
+                val errorColor = colorProvider.getColor(im.vector.lib.ui.styles.R.color.notification_accent_color)
                 ContextCompat.getDrawable(holder.view.context, R.drawable.ic_notification_privacy_warning)?.apply {
                     ThemeUtils.tintDrawableWithColor(this, errorColor)
                     holder.textView.setCompoundDrawablesWithIntrinsicBounds(this, null, null, null)
                 }
             }
             IconMode.ERROR -> {
-                val errorColor = colorProvider.getColor(R.color.vector_error_color)
+                val errorColor = colorProvider.getColorFromAttribute(com.google.android.material.R.attr.colorError)
                 ContextCompat.getDrawable(holder.view.context, R.drawable.ic_notification_privacy_warning)?.apply {
                     ThemeUtils.tintDrawableWithColor(this, errorColor)
                     holder.textView.setCompoundDrawablesWithIntrinsicBounds(this, null, null, null)

@@ -1,38 +1,27 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.crypto.recover
 
-import im.vector.app.R
 import im.vector.app.core.platform.ViewModelTask
 import im.vector.app.core.platform.WaitingViewData
 import im.vector.app.core.resources.StringProvider
-import org.matrix.android.sdk.api.NoOpMatrixCallback
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.listeners.ProgressListener
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.crypto.crosssigning.KEYBACKUP_SECRET_SSSS_NAME
+import org.matrix.android.sdk.api.session.crypto.keysbackup.BackupUtils
+import org.matrix.android.sdk.api.session.crypto.keysbackup.computeRecoveryKey
+import org.matrix.android.sdk.api.session.crypto.keysbackup.extractCurveKeyFromRecoveryKey
 import org.matrix.android.sdk.api.session.securestorage.EmptyKeySigner
+import org.matrix.android.sdk.api.session.securestorage.KeyRef
 import org.matrix.android.sdk.api.session.securestorage.RawBytesKeySpec
-import org.matrix.android.sdk.api.session.securestorage.SharedSecretStorageService
 import org.matrix.android.sdk.api.session.securestorage.SsssKeyCreationInfo
-import org.matrix.android.sdk.internal.crypto.crosssigning.toBase64NoPadding
-import org.matrix.android.sdk.internal.crypto.keysbackup.deriveKey
-import org.matrix.android.sdk.internal.crypto.keysbackup.util.computeRecoveryKey
-import org.matrix.android.sdk.internal.crypto.keysbackup.util.extractCurveKeyFromRecoveryKey
-import org.matrix.android.sdk.internal.util.awaitCallback
+import org.matrix.android.sdk.api.util.toBase64NoPadding
 import timber.log.Timber
 import java.util.UUID
 import javax.inject.Inject
@@ -62,41 +51,47 @@ class BackupToQuadSMigrationTask @Inject constructor(
             // We need to use the current secret for keybackup and use it as the new master key for SSSS
             // Then we need to put back the backup key in sss
             val keysBackupService = session.cryptoService().keysBackupService()
-            val quadS = session.sharedSecretStorageService
+            val quadS = session.sharedSecretStorageService()
 
             val version = keysBackupService.keysBackupVersion ?: return Result.NoKeyBackupVersion
 
-            reportProgress(params, R.string.bootstrap_progress_checking_backup)
+            reportProgress(params, CommonStrings.bootstrap_progress_checking_backup)
             val curveKey =
                     (if (params.recoveryKey != null) {
                         extractCurveKeyFromRecoveryKey(params.recoveryKey)
                     } else if (!params.passphrase.isNullOrEmpty() && version.getAuthDataAsMegolmBackupAuthData()?.privateKeySalt != null) {
                         version.getAuthDataAsMegolmBackupAuthData()?.let { authData ->
-                            deriveKey(params.passphrase, authData.privateKeySalt!!, authData.privateKeyIterations!!, object : ProgressListener {
-                                override fun onProgress(progress: Int, total: Int) {
-                                    params.progressListener?.onProgress(WaitingViewData(
-                                            stringProvider.getString(R.string.bootstrap_progress_checking_backup_with_info,
-                                                    "$progress/$total")
-                                    ))
-                                }
-                            })
+                            keysBackupService.computePrivateKey(
+                                    params.passphrase,
+                                    authData.privateKeySalt!!,
+                                    authData.privateKeyIterations!!,
+                                    object : ProgressListener {
+                                        override fun onProgress(progress: Int, total: Int) {
+                                            params.progressListener?.onProgress(
+                                                    WaitingViewData(
+                                                            stringProvider.getString(
+                                                                    CommonStrings.bootstrap_progress_checking_backup_with_info,
+                                                                    "$progress/$total"
+                                                            )
+                                                    )
+                                            )
+                                        }
+                                    })
                         }
                     } else null)
                             ?: return Result.IllegalParams
 
-            reportProgress(params, R.string.bootstrap_progress_compute_curve_key)
+            reportProgress(params, CommonStrings.bootstrap_progress_compute_curve_key)
             val recoveryKey = computeRecoveryKey(curveKey)
-
-            val isValid = awaitCallback<Boolean> {
-                keysBackupService.isValidRecoveryKeyForCurrentVersion(recoveryKey, it)
-            }
+            val backupRecoveryKey = BackupUtils.recoveryKeyFromBase58(recoveryKey)
+            val isValid = backupRecoveryKey.let { keysBackupService.isValidRecoveryKeyForCurrentVersion(it) }
 
             if (!isValid) return Result.InvalidRecoverySecret
 
             val info: SsssKeyCreationInfo =
                     when {
                         params.passphrase?.isNotEmpty() == true -> {
-                            reportProgress(params, R.string.bootstrap_progress_generating_ssss)
+                            reportProgress(params, CommonStrings.bootstrap_progress_generating_ssss)
                             quadS.generateKeyWithPassphrase(
                                     UUID.randomUUID().toString(),
                                     "ssss_key",
@@ -107,15 +102,17 @@ class BackupToQuadSMigrationTask @Inject constructor(
                                             params.progressListener?.onProgress(
                                                     WaitingViewData(
                                                             stringProvider.getString(
-                                                                    R.string.bootstrap_progress_generating_ssss_with_info,
-                                                                    "$progress/$total")
-                                                    ))
+                                                                    CommonStrings.bootstrap_progress_generating_ssss_with_info,
+                                                                    "$progress/$total"
+                                                            )
+                                                    )
+                                            )
                                         }
                                     }
                             )
                         }
-                        params.recoveryKey != null              -> {
-                            reportProgress(params, R.string.bootstrap_progress_generating_ssss_recovery)
+                        params.recoveryKey != null -> {
+                            reportProgress(params, CommonStrings.bootstrap_progress_generating_ssss_recovery)
                             quadS.generateKey(
                                     UUID.randomUUID().toString(),
                                     extractCurveKeyFromRecoveryKey(params.recoveryKey)?.let { RawBytesKeySpec(it) },
@@ -123,33 +120,24 @@ class BackupToQuadSMigrationTask @Inject constructor(
                                     EmptyKeySigner()
                             )
                         }
-                        else                                    -> {
+                        else -> {
                             return Result.IllegalParams
                         }
                     }
 
             // Ok, so now we have migrated the old keybackup secret as the quadS key
             // Now we need to store the keybackup key in SSSS in a compatible way
-            reportProgress(params, R.string.bootstrap_progress_storing_in_sss)
+            reportProgress(params, CommonStrings.bootstrap_progress_storing_in_sss)
             quadS.storeSecret(
                     KEYBACKUP_SECRET_SSSS_NAME,
                     curveKey.toBase64NoPadding(),
-                    listOf(SharedSecretStorageService.KeyRef(info.keyId, info.keySpec))
+                    listOf(KeyRef(info.keyId, info.keySpec))
             )
 
             // save for gossiping
-            keysBackupService.saveBackupRecoveryKey(recoveryKey, version.version)
-
-            // while we are there let's restore, but do not block
-            session.cryptoService().keysBackupService().restoreKeysWithRecoveryKey(
-                    version,
-                    recoveryKey,
-                    null,
-                    null,
-                    null,
-                    NoOpMatrixCallback()
-            )
-
+            keysBackupService.saveBackupRecoveryKey(backupRecoveryKey, version.version)
+            // It's not a good idea to download the full backup, it might take very long
+            // and use a lot of resources
             return Result.Success
         } catch (failure: Throwable) {
             Timber.e(failure, "## BackupToQuadSMigrationTask - Failed to migrate backup")

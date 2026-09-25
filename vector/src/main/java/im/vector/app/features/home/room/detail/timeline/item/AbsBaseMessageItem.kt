@@ -1,42 +1,48 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home.room.detail.timeline.item
 
+import android.annotation.SuppressLint
+import android.graphics.Typeface
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.annotation.IdRes
+import androidx.annotation.LayoutRes
+import androidx.appcompat.view.ContextThemeWrapper
+import androidx.core.content.ContextCompat.getDrawable
 import androidx.core.view.isVisible
+import androidx.core.widget.TextViewCompat
 import im.vector.app.R
+import im.vector.app.core.epoxy.ClickListener
+import im.vector.app.core.epoxy.onClick
+import im.vector.app.core.extensions.getDrawableAsSpannable
 import im.vector.app.core.ui.views.ShieldImageView
+import im.vector.app.core.utils.DimensionConverter
 import im.vector.app.features.home.AvatarRenderer
 import im.vector.app.features.home.room.detail.timeline.MessageColorProvider
 import im.vector.app.features.home.room.detail.timeline.TimelineEventController
+import im.vector.app.features.home.room.detail.timeline.view.TimelineMessageLayoutRenderer
 import im.vector.app.features.reactions.widget.ReactionButton
-import org.matrix.android.sdk.api.crypto.RoomEncryptionTrustLevel
+import im.vector.app.features.themes.ThemeUtils
+import im.vector.lib.strings.CommonPlurals
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.session.room.send.SendState
+
+private const val MAX_REACTIONS_TO_SHOW = 8
 
 /**
  * Base timeline item with reactions and read receipts.
  * Manages associated click listeners and send status.
  * Should not be used as this, use a subclass.
  */
-abstract class AbsBaseMessageItem<H : AbsBaseMessageItem.Holder> : BaseEventItem<H>() {
+abstract class AbsBaseMessageItem<H : AbsBaseMessageItem.Holder>(@LayoutRes layoutId: Int) : BaseEventItem<H>(layoutId) {
 
     abstract val baseAttributes: Attributes
 
@@ -62,15 +68,29 @@ abstract class AbsBaseMessageItem<H : AbsBaseMessageItem.Holder> : BaseEventItem
         return listOf(baseAttributes.informationData.eventId)
     }
 
+    @SuppressLint("SetTextI18n")
     override fun bind(holder: H) {
         super.bind(holder)
-        val reactions = baseAttributes.informationData.orderedReactionList
+        renderReactions(holder, baseAttributes.informationData.reactionsSummary)
+        holder.e2EDecorationView.renderE2EDecoration(baseAttributes.informationData.e2eDecoration)
+        holder.view.onClick(baseAttributes.itemClickListener)
+        holder.view.setOnLongClickListener(baseAttributes.itemLongClickListener)
+        (holder.view as? TimelineMessageLayoutRenderer)?.renderMessageLayout(baseAttributes.informationData.messageLayout)
+    }
+
+    private fun renderReactions(holder: H, reactionsSummary: ReactionsSummaryData) {
+        val reactions = reactionsSummary.reactions
         if (!shouldShowReactionAtBottom() || reactions.isNullOrEmpty()) {
             holder.reactionsContainer.isVisible = false
         } else {
             holder.reactionsContainer.isVisible = true
             holder.reactionsContainer.removeAllViews()
-            reactions.take(8).forEach { reaction ->
+            val reactionsToShow = if (reactionsSummary.showAll) {
+                reactions
+            } else {
+                reactions.take(MAX_REACTIONS_TO_SHOW)
+            }
+            reactionsToShow.forEach { reaction ->
                 val reactionButton = ReactionButton(holder.view.context)
                 reactionButton.reactedListener = reactionClickListener
                 reactionButton.setTag(R.id.reactionsContainer, reaction.key)
@@ -80,22 +100,40 @@ abstract class AbsBaseMessageItem<H : AbsBaseMessageItem.Holder> : BaseEventItem
                 reactionButton.isEnabled = reaction.synced
                 holder.reactionsContainer.addView(reactionButton)
             }
+            if (reactions.count() > MAX_REACTIONS_TO_SHOW) {
+                val showReactionsTextView = createReactionTextView(holder)
+                if (reactionsSummary.showAll) {
+                    showReactionsTextView.setText(CommonStrings.message_reaction_show_less)
+                    showReactionsTextView.onClick {
+                        baseAttributes.reactionsSummaryEvents?.onShowLessClicked?.invoke()
+                    }
+                } else {
+                    val moreCount = reactions.count() - MAX_REACTIONS_TO_SHOW
+                    showReactionsTextView.text = holder.view.resources.getQuantityString(CommonPlurals.message_reaction_show_more, moreCount, moreCount)
+                    showReactionsTextView.onClick {
+                        baseAttributes.reactionsSummaryEvents?.onShowMoreClicked?.invoke()
+                    }
+                }
+                holder.reactionsContainer.addView(showReactionsTextView)
+            }
+            val addMoreReactionsTextView = createReactionTextView(holder)
+
+            addMoreReactionsTextView.text = holder.view.context.getDrawableAsSpannable(R.drawable.ic_add_reaction_small)
+            addMoreReactionsTextView.onClick {
+                baseAttributes.reactionsSummaryEvents?.onAddMoreClicked?.invoke()
+            }
+            holder.reactionsContainer.addView(addMoreReactionsTextView)
             holder.reactionsContainer.setOnLongClickListener(baseAttributes.itemLongClickListener)
         }
+    }
 
-        when (baseAttributes.informationData.e2eDecoration) {
-            E2EDecoration.NONE                 -> {
-                holder.e2EDecorationView.render(null)
-            }
-            E2EDecoration.WARN_IN_CLEAR,
-            E2EDecoration.WARN_SENT_BY_UNVERIFIED,
-            E2EDecoration.WARN_SENT_BY_UNKNOWN -> {
-                holder.e2EDecorationView.render(RoomEncryptionTrustLevel.Warning)
-            }
+    private fun createReactionTextView(holder: H): TextView {
+        return TextView(ContextThemeWrapper(holder.view.context, im.vector.lib.ui.styles.R.style.TimelineReactionView)).apply {
+            background = getDrawable(context, R.drawable.reaction_rounded_rect_shape_off)
+            TextViewCompat.setTextAppearance(this, im.vector.lib.ui.styles.R.style.TextAppearance_Vector_Micro)
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ThemeUtils.getColor(context, im.vector.lib.ui.styles.R.attr.vctr_content_secondary))
         }
-
-        holder.view.setOnClickListener(baseAttributes.itemClickListener)
-        holder.view.setOnLongClickListener(baseAttributes.itemLongClickListener)
     }
 
     override fun unbind(holder: H) {
@@ -111,6 +149,9 @@ abstract class AbsBaseMessageItem<H : AbsBaseMessageItem.Holder> : BaseEventItem
     }
 
     abstract class Holder(@IdRes stubId: Int) : BaseEventItem.BaseHolder(stubId) {
+        val dimensionConverter by lazy {
+            DimensionConverter(view.resources)
+        }
         val reactionsContainer by bind<ViewGroup>(R.id.reactionsContainer)
         val e2EDecorationView by bind<ShieldImageView>(R.id.messageE2EDecoration)
     }
@@ -124,10 +165,11 @@ abstract class AbsBaseMessageItem<H : AbsBaseMessageItem.Holder> : BaseEventItem
         val avatarRenderer: AvatarRenderer
         val messageColorProvider: MessageColorProvider
         val itemLongClickListener: View.OnLongClickListener?
-        val itemClickListener: View.OnClickListener?
+        val itemClickListener: ClickListener?
 
-        //        val memberClickListener: View.OnClickListener?
+        //        val memberClickListener: ClickListener?
         val reactionPillCallback: TimelineEventController.ReactionPillCallback?
+        val reactionsSummaryEvents: ReactionsSummaryEvents?
 
         //        val avatarCallback: TimelineEventController.AvatarCallback?
         val readReceiptsCallback: TimelineEventController.ReadReceiptsCallback?
@@ -139,7 +181,7 @@ abstract class AbsBaseMessageItem<H : AbsBaseMessageItem.Holder> : BaseEventItem
 //            override val avatarRenderer: AvatarRenderer,
 //            override val colorProvider: ColorProvider,
 //            override val itemLongClickListener: View.OnLongClickListener? = null,
-//            override val itemClickListener: View.OnClickListener? = null,
+//            override val itemClickListener: ClickListener? = null,
 //            override val reactionPillCallback: TimelineEventController.ReactionPillCallback? = null,
 //            override val readReceiptsCallback: TimelineEventController.ReadReceiptsCallback? = null
 //    ) : Attributes

@@ -1,31 +1,20 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.terms
 
-import androidx.lifecycle.viewModelScope
-import com.airbnb.mvrx.ActivityViewModelContext
 import com.airbnb.mvrx.Loading
-import com.airbnb.mvrx.MvRxViewModelFactory
+import com.airbnb.mvrx.MavericksViewModelFactory
 import com.airbnb.mvrx.Success
 import com.airbnb.mvrx.Uninitialized
-import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
-import im.vector.app.core.extensions.exhaustive
+import dagger.assisted.AssistedInject
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.VectorViewModel
 import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.session.Session
@@ -37,27 +26,20 @@ class ReviewTermsViewModel @AssistedInject constructor(
 ) : VectorViewModel<ReviewTermsViewState, ReviewTermsAction, ReviewTermsViewEvents>(initialState) {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: ReviewTermsViewState): ReviewTermsViewModel
+    interface Factory : MavericksAssistedViewModelFactory<ReviewTermsViewModel, ReviewTermsViewState> {
+        override fun create(initialState: ReviewTermsViewState): ReviewTermsViewModel
     }
 
-    companion object : MvRxViewModelFactory<ReviewTermsViewModel, ReviewTermsViewState> {
-
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: ReviewTermsViewState): ReviewTermsViewModel? {
-            val activity: ReviewTermsActivity = (viewModelContext as ActivityViewModelContext).activity()
-            return activity.viewModelFactory.create(state)
-        }
-    }
+    companion object : MavericksViewModelFactory<ReviewTermsViewModel, ReviewTermsViewState> by hiltMavericksViewModelFactory()
 
     lateinit var termsArgs: ServiceTermsArgs
 
     override fun handle(action: ReviewTermsAction) {
         when (action) {
-            is ReviewTermsAction.LoadTerms          -> loadTerms(action)
+            is ReviewTermsAction.LoadTerms -> loadTerms(action)
             is ReviewTermsAction.MarkTermAsAccepted -> markTermAsAccepted(action)
-            ReviewTermsAction.Accept                -> acceptTerms()
-        }.exhaustive
+            ReviewTermsAction.Accept -> acceptTerms()
+        }
     }
 
     private fun markTermAsAccepted(action: ReviewTermsAction.MarkTermAsAccepted) = withState { state ->
@@ -93,7 +75,7 @@ class ReviewTermsViewModel @AssistedInject constructor(
 
         viewModelScope.launch {
             try {
-                session.agreeToTerms(
+                session.termsService().agreeToTerms(
                         termsArgs.type,
                         termsArgs.baseURL,
                         agreedUrls,
@@ -118,9 +100,10 @@ class ReviewTermsViewModel @AssistedInject constructor(
 
         viewModelScope.launch {
             try {
-                val data = session.getTerms(termsArgs.type, termsArgs.baseURL)
+                val data = session.termsService().getTerms(termsArgs.type, termsArgs.baseURL)
                 val terms = data.serverResponse.getLocalizedTerms(action.preferredLanguageCode).map {
-                    Term(it.localizedUrl ?: "",
+                    Term(
+                            it.localizedUrl ?: "",
                             it.localizedName ?: "",
                             it.version,
                             accepted = data.alreadyAcceptedTermUrls.contains(it.localizedUrl)

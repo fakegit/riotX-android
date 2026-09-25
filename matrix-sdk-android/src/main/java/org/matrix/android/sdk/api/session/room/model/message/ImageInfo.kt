@@ -18,7 +18,7 @@ package org.matrix.android.sdk.api.session.room.model.message
 
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
-import org.matrix.android.sdk.internal.crypto.model.rest.EncryptedFileInfo
+import org.matrix.android.sdk.api.session.crypto.model.EncryptedFileInfo
 
 @JsonClass(generateAdapter = true)
 data class ImageInfo(
@@ -40,7 +40,7 @@ data class ImageInfo(
         /**
          * Size of the image in bytes.
          */
-        @Json(name = "size") val size: Int = 0,
+        @Json(name = "size") val size: Long = 0,
 
         /**
          * Metadata about the image referred to in thumbnail_url.
@@ -57,3 +57,10 @@ data class ImageInfo(
          */
         @Json(name = "thumbnail_file") val thumbnailFile: EncryptedFileInfo? = null
 )
+
+/**
+ * Get the url of the encrypted thumbnail or of the thumbnail.
+ */
+fun ImageInfo.getThumbnailUrl(): String? {
+    return thumbnailFile?.url ?: thumbnailUrl
+}

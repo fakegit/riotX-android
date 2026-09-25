@@ -18,10 +18,10 @@ package org.matrix.android.sdk.internal.session.pushers
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import org.matrix.android.sdk.internal.di.SerializeNulls
+import java.security.InvalidParameterException
 
 /**
  * Example:
- *
  * <code>
  *     {
  *      "pushers": [
@@ -33,12 +33,15 @@ import org.matrix.android.sdk.internal.di.SerializeNulls
  *              "device_display_name": "Alice's Phone",
  *              "profile_tag": "xyz",
  *              "lang": "en-US",
+ *              "enabled": true,
+ *              "device_id": "abc123",
  *              "data": {
  *              "url": "https://example.com/_matrix/push/v1/notify"
  *          }
  *      }]
  *  }
  * </code>
+ * .
  */
 @JsonClass(generateAdapter = true)
 internal data class JsonPusher(
@@ -111,5 +114,24 @@ internal data class JsonPusher(
          * The default is false.
          */
         @Json(name = "append")
-        val append: Boolean? = false
-)
+        val append: Boolean? = false,
+
+        /**
+         * Whether the pusher should actively create push notifications.
+         */
+        @Json(name = "org.matrix.msc3881.enabled")
+        val enabled: Boolean = true,
+
+        /**
+         * The device_id of the session that registered the pusher.
+         */
+        @Json(name = "org.matrix.msc3881.device_id")
+        val deviceId: String? = null,
+) {
+    init {
+        // Do some parameter checks. It's ok to throw Exception, to inform developer of the problem
+        if (pushKey.length > 512) throw InvalidParameterException("pushkey should not exceed 512 chars")
+        if (appId.length > 64) throw InvalidParameterException("appId should not exceed 64 chars")
+        data?.url?.let { url -> if ("/_matrix/push/v1/notify" !in url) throw InvalidParameterException("url should contain '/_matrix/push/v1/notify'") }
+    }
+}

@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.crypto.recover
@@ -21,13 +12,13 @@ import android.view.ViewGroup
 import androidx.core.view.isVisible
 import com.airbnb.mvrx.parentFragmentViewModel
 import com.airbnb.mvrx.withState
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.platform.VectorBaseFragment
 import im.vector.app.databinding.FragmentBootstrapWaitingBinding
 
-import javax.inject.Inject
-
-class BootstrapWaitingFragment @Inject constructor()
-    : VectorBaseFragment<FragmentBootstrapWaitingBinding>() {
+@AndroidEntryPoint
+class BootstrapWaitingFragment :
+        VectorBaseFragment<FragmentBootstrapWaitingBinding>() {
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentBootstrapWaitingBinding {
         return FragmentBootstrapWaitingBinding.inflate(inflater, container, false)
@@ -46,11 +37,12 @@ class BootstrapWaitingFragment @Inject constructor()
 //                bootstrapLoadingStatusText.isVisible = false
 //                bootstrapDescriptionText.isVisible = false
 //            }
-            else                          -> {
+            else -> {
                 // just show the spinner
                 views.bootstrapLoadingStatusText.isVisible = false
                 views.bootstrapDescriptionText.isVisible = false
             }
         }
+        views.bootstrapDescriptionText.giveAccessibilityFocusOnce()
     }
 }

@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.reactions
 
@@ -19,9 +10,10 @@ import android.graphics.Typeface
 import androidx.recyclerview.widget.RecyclerView
 import com.airbnb.epoxy.TypedEpoxyController
 import im.vector.app.EmojiCompatFontProvider
-import im.vector.app.R
 import im.vector.app.core.resources.StringProvider
 import im.vector.app.core.ui.list.genericFooterItem
+import im.vector.lib.core.utils.epoxy.charsequence.toEpoxyCharSequence
+import im.vector.lib.strings.CommonStrings
 import javax.inject.Inject
 
 class EmojiSearchResultController @Inject constructor(
@@ -45,30 +37,31 @@ class EmojiSearchResultController @Inject constructor(
 
     override fun buildModels(data: EmojiSearchResultViewState?) {
         val results = data?.results ?: return
+        val host = this
 
         if (results.isEmpty()) {
             if (data.query.isEmpty()) {
                 // display 'Type something to find'
                 genericFooterItem {
                     id("type.query.item")
-                    text(stringProvider.getString(R.string.reaction_search_type_hint))
+                    text(host.stringProvider.getString(CommonStrings.reaction_search_type_hint).toEpoxyCharSequence())
                 }
             } else {
                 // Display no search Results
                 genericFooterItem {
                     id("no.results.item")
-                    text(stringProvider.getString(R.string.no_result_placeholder))
+                    text(host.stringProvider.getString(CommonStrings.no_result_placeholder).toEpoxyCharSequence())
                 }
             }
         } else {
             // Build the search results
-            results.forEach {
+            results.forEach { emojiItem ->
                 emojiSearchResultItem {
-                    id(it.name)
-                    emojiItem(it)
-                    emojiTypeFace(emojiTypeface)
+                    id(emojiItem.name)
+                    emojiItem(emojiItem)
+                    emojiTypeFace(host.emojiTypeface)
                     currentQuery(data.query)
-                    onClickListener(listener)
+                    onClickListener { host.listener?.onReactionSelected(emojiItem.emoji) }
                 }
             }
         }

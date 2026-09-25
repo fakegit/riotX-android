@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roomprofile.uploads.files
@@ -26,6 +17,7 @@ import com.airbnb.mvrx.Loading
 import com.airbnb.mvrx.Success
 import com.airbnb.mvrx.parentFragmentViewModel
 import com.airbnb.mvrx.withState
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
 import im.vector.app.core.extensions.cleanup
 import im.vector.app.core.extensions.configureWith
@@ -35,15 +27,17 @@ import im.vector.app.core.platform.VectorBaseFragment
 import im.vector.app.databinding.FragmentGenericStateViewRecyclerBinding
 import im.vector.app.features.roomprofile.uploads.RoomUploadsAction
 import im.vector.app.features.roomprofile.uploads.RoomUploadsViewModel
-
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.session.room.uploads.UploadEvent
 import javax.inject.Inject
 
-class RoomUploadsFilesFragment @Inject constructor(
-        private val controller: UploadsFileController
-) : VectorBaseFragment<FragmentGenericStateViewRecyclerBinding>(),
+@AndroidEntryPoint
+class RoomUploadsFilesFragment :
+        VectorBaseFragment<FragmentGenericStateViewRecyclerBinding>(),
         UploadsFileController.Listener,
         StateView.EventCallback {
+
+    @Inject lateinit var controller: UploadsFileController
 
     private val uploadsViewModel by parentFragmentViewModel(RoomUploadsViewModel::class)
 
@@ -58,7 +52,7 @@ class RoomUploadsFilesFragment @Inject constructor(
         views.genericStateViewListStateView.eventCallback = this
 
         views.genericStateViewListRecycler.trackItemsVisibilityChange()
-        views.genericStateViewListRecycler.configureWith(controller, showDivider = true)
+        views.genericStateViewListRecycler.configureWith(controller, dividerDrawable = R.drawable.divider_horizontal)
         controller.listener = this
     }
 
@@ -95,7 +89,7 @@ class RoomUploadsFilesFragment @Inject constructor(
                 is Loading -> {
                     views.genericStateViewListStateView.state = StateView.State.Loading
                 }
-                is Fail    -> {
+                is Fail -> {
                     views.genericStateViewListStateView.state = StateView.State.Error(errorFormatter.toHumanReadable(state.asyncEventsRequest.error))
                 }
                 is Success -> {
@@ -104,11 +98,12 @@ class RoomUploadsFilesFragment @Inject constructor(
                         loadMore()
                     } else {
                         views.genericStateViewListStateView.state = StateView.State.Empty(
-                                title = getString(R.string.uploads_files_no_result),
+                                title = getString(CommonStrings.uploads_files_no_result),
                                 image = ContextCompat.getDrawable(requireContext(), R.drawable.ic_file)
                         )
                     }
                 }
+                else -> Unit
             }
         } else {
             views.genericStateViewListStateView.state = StateView.State.Content

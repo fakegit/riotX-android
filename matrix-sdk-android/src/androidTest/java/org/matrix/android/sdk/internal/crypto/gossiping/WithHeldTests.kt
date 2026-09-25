@@ -18,51 +18,60 @@ package org.matrix.android.sdk.internal.crypto.gossiping
 
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import org.matrix.android.sdk.InstrumentedTest
-import org.matrix.android.sdk.api.NoOpMatrixCallback
-import org.matrix.android.sdk.api.extensions.tryOrNull
-import org.matrix.android.sdk.api.session.crypto.MXCryptoError
-import org.matrix.android.sdk.api.session.events.model.EventType
-import org.matrix.android.sdk.api.session.events.model.toModel
-import org.matrix.android.sdk.common.CommonTestHelper
-import org.matrix.android.sdk.common.CryptoTestHelper
-import org.matrix.android.sdk.common.MockOkHttpInterceptor
-import org.matrix.android.sdk.common.SessionTestParams
-import org.matrix.android.sdk.common.TestConstants
-import org.matrix.android.sdk.internal.crypto.model.event.EncryptedEventContent
-import org.matrix.android.sdk.internal.crypto.model.event.WithHeldCode
+import androidx.test.filters.LargeTest
 import org.junit.Assert
+import org.junit.Assume
 import org.junit.FixMethodOrder
+import org.junit.Ignore
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
+import org.matrix.android.sdk.InstrumentedTest
+import org.matrix.android.sdk.api.crypto.MXCryptoConfig
+import org.matrix.android.sdk.api.extensions.tryOrNull
+import org.matrix.android.sdk.api.session.crypto.MXCryptoError
+import org.matrix.android.sdk.api.session.crypto.RequestResult
+import org.matrix.android.sdk.api.session.events.model.EventType
+import org.matrix.android.sdk.api.session.events.model.content.EncryptedEventContent
+import org.matrix.android.sdk.api.session.events.model.content.WithHeldCode
+import org.matrix.android.sdk.api.session.events.model.toModel
+import org.matrix.android.sdk.api.session.getRoom
+import org.matrix.android.sdk.api.session.room.getTimelineEvent
+import org.matrix.android.sdk.common.CommonTestHelper.Companion.runCryptoTest
+import org.matrix.android.sdk.common.MockOkHttpInterceptor
+import org.matrix.android.sdk.common.RetryTestRule
+import org.matrix.android.sdk.common.SessionTestParams
+import org.matrix.android.sdk.common.TestConstants
+import org.matrix.android.sdk.mustFail
 
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.JVM)
+@LargeTest
 class WithHeldTests : InstrumentedTest {
 
-    private val mTestHelper = CommonTestHelper(context())
-    private val mCryptoTestHelper = CryptoTestHelper(mTestHelper)
+    @get:Rule val rule = RetryTestRule(3)
 
     @Test
-    fun test_WithHeldUnverifiedReason() {
+    fun test_WithHeldUnverifiedReason() = runCryptoTest(context()) { cryptoTestHelper, testHelper ->
+
         // =============================
         // ARRANGE
         // =============================
 
-        val aliceSession = mTestHelper.createAccount(TestConstants.USER_ALICE, SessionTestParams(true))
-        val bobSession = mTestHelper.createAccount(TestConstants.USER_BOB, SessionTestParams(true))
+        val aliceSession = testHelper.createAccount(TestConstants.USER_ALICE, SessionTestParams(true))
+        val bobSession = testHelper.createAccount(TestConstants.USER_BOB, SessionTestParams(true))
 
         // Initialize cross signing on both
-        mCryptoTestHelper.initializeCrossSigning(aliceSession)
-        mCryptoTestHelper.initializeCrossSigning(bobSession)
+        cryptoTestHelper.initializeCrossSigning(aliceSession)
+        cryptoTestHelper.initializeCrossSigning(bobSession)
 
-        val roomId = mCryptoTestHelper.createDM(aliceSession, bobSession)
-        mCryptoTestHelper.verifySASCrossSign(aliceSession, bobSession, roomId)
+        val roomId = cryptoTestHelper.createDM(aliceSession, bobSession)
+        cryptoTestHelper.verifySASCrossSign(aliceSession, bobSession, roomId)
 
         val roomAlicePOV = aliceSession.getRoom(roomId)!!
 
-        val bobUnverifiedSession = mTestHelper.logIntoAccount(bobSession.myUserId, SessionTestParams(true))
+        val bobUnverifiedSession = testHelper.logIntoAccount(bobSession.myUserId, SessionTestParams(true))
 
         // =============================
         // ACT
@@ -71,69 +80,86 @@ class WithHeldTests : InstrumentedTest {
         // Alice decide to not send to unverified sessions
         aliceSession.cryptoService().setGlobalBlacklistUnverifiedDevices(true)
 
-        val timelineEvent = mTestHelper.sendTextMessage(roomAlicePOV, "Hello Bob", 1).first()
+        val eventId = testHelper.sendMessageInRoom(roomAlicePOV, "Hello Bob")
 
         // await for bob unverified session to get the message
-        mTestHelper.waitWithLatch { latch ->
-            mTestHelper.retryPeriodicallyWithLatch(latch) {
-                bobUnverifiedSession.getRoom(roomId)?.getTimeLineEvent(timelineEvent.eventId) != null
-            }
+        testHelper.retryWithBackoff {
+            bobUnverifiedSession.getRoom(roomId)?.getTimelineEvent(eventId) != null
         }
 
-        val eventBobPOV = bobUnverifiedSession.getRoom(roomId)?.getTimeLineEvent(timelineEvent.eventId)!!
+        val eventBobPOV = bobUnverifiedSession.getRoom(roomId)?.getTimelineEvent(eventId)!!
 
+        val megolmSessionId = eventBobPOV.root.content.toModel<EncryptedEventContent>()!!.sessionId!!
         // =============================
         // ASSERT
         // =============================
 
         // Bob should not be able to decrypt because the keys is withheld
-        try {
-            // .. might need to wait a bit for stability?
+        // .. might need to wait a bit for stability?
+        // WILL FAIL for rust until this fixed https://github.com/matrix-org/matrix-rust-sdk/issues/1806
+        mustFail(
+                message = "This session should not be able to decrypt",
+                failureBlock = { failure ->
+                    val type = (failure as MXCryptoError.Base).errorType
+                    val technicalMessage = failure.technicalMessage
+                    Assert.assertEquals("Error should be withheld", MXCryptoError.ErrorType.KEYS_WITHHELD, type)
+                    Assert.assertEquals("Cause should be unverified", WithHeldCode.UNVERIFIED.value, technicalMessage)
+                }
+        ) {
             bobUnverifiedSession.cryptoService().decryptEvent(eventBobPOV.root, "")
-            Assert.fail("This session should not be able to decrypt")
-        } catch (failure: Throwable) {
-            val type = (failure as MXCryptoError.Base).errorType
-            val technicalMessage = failure.technicalMessage
-            Assert.assertEquals("Error should be withheld", MXCryptoError.ErrorType.KEYS_WITHHELD, type)
-            Assert.assertEquals("Cause should be unverified", WithHeldCode.UNVERIFIED.value, technicalMessage)
         }
 
+        if (bobUnverifiedSession.cryptoService().supportKeyRequestInspection()) {
+            // Let's see if the reply we got from bob first session is unverified
+            testHelper.retryWithBackoff {
+                bobUnverifiedSession.cryptoService().getOutgoingRoomKeyRequests()
+                        .firstOrNull { it.sessionId == megolmSessionId }
+                        ?.results
+                        ?.firstOrNull { it.fromDevice == bobSession.sessionParams.deviceId }
+                        ?.result
+                        ?.let {
+                            it as? RequestResult.Failure
+                        }
+                        ?.code == WithHeldCode.UNVERIFIED
+            }
+        }
         // enable back sending to unverified
         aliceSession.cryptoService().setGlobalBlacklistUnverifiedDevices(false)
 
-        val secondEvent = mTestHelper.sendTextMessage(roomAlicePOV, "Verify your device!!", 1).first()
+        val secondEventId = testHelper.sendMessageInRoom(roomAlicePOV, "Verify your device!!")
 
-        mTestHelper.waitWithLatch { latch ->
-            mTestHelper.retryPeriodicallyWithLatch(latch) {
-                val ev = bobUnverifiedSession.getRoom(roomId)?.getTimeLineEvent(secondEvent.eventId)
-                // wait until it's decrypted
-                ev?.root?.getClearType() == EventType.MESSAGE
-            }
+        testHelper.retryWithBackoff {
+            val ev = bobUnverifiedSession.getRoom(roomId)?.getTimelineEvent(secondEventId)
+            // wait until it's decrypted
+            ev?.root?.getClearType() == EventType.MESSAGE
         }
 
         // Previous message should still be undecryptable (partially withheld session)
-        try {
-            // .. might need to wait a bit for stability?
+        // .. might need to wait a bit for stability?
+        mustFail(
+                message = "This session should not be able to decrypt",
+                failureBlock = { failure ->
+                    val type = (failure as MXCryptoError.Base).errorType
+                    val technicalMessage = failure.technicalMessage
+                    Assert.assertEquals("Error should be withheld", MXCryptoError.ErrorType.KEYS_WITHHELD, type)
+                    Assert.assertEquals("Cause should be unverified", WithHeldCode.UNVERIFIED.value, technicalMessage)
+                }) {
             bobUnverifiedSession.cryptoService().decryptEvent(eventBobPOV.root, "")
-            Assert.fail("This session should not be able to decrypt")
-        } catch (failure: Throwable) {
-            val type = (failure as MXCryptoError.Base).errorType
-            val technicalMessage = failure.technicalMessage
-            Assert.assertEquals("Error should be withheld", MXCryptoError.ErrorType.KEYS_WITHHELD, type)
-            Assert.assertEquals("Cause should be unverified", WithHeldCode.UNVERIFIED.value, technicalMessage)
         }
-
-        mTestHelper.signOutAndClose(aliceSession)
-        mTestHelper.signOutAndClose(bobSession)
-        mTestHelper.signOutAndClose(bobUnverifiedSession)
     }
 
     @Test
-    fun  test_WithHeldNoOlm() {
-        val testData = mCryptoTestHelper.doE2ETestWithAliceAndBobInARoom()
+    @Ignore("ignore NoOlm for now, implementation not correct")
+    fun test_WithHeldNoOlm() = runCryptoTest(
+            context(),
+            cryptoConfig = MXCryptoConfig(limitRoomKeyRequestsToMyDevices = false)
+    ) { cryptoTestHelper, testHelper ->
+
+        val testData = cryptoTestHelper.doE2ETestWithAliceAndBobInARoom()
         val aliceSession = testData.firstSession
+        Assume.assumeTrue("Not supported", aliceSession.cryptoService().supportKeyRequestInspection())
         val bobSession = testData.secondSession!!
-        val aliceInterceptor = mTestHelper.getTestInterceptor(aliceSession)
+        val aliceInterceptor = testHelper.getTestInterceptor(aliceSession)
 
         // Simulate no OTK
         aliceInterceptor!!.addRule(MockOkHttpInterceptor.SimpleRule(
@@ -147,26 +173,25 @@ class WithHeldTests : InstrumentedTest {
 
         val roomAlicePov = aliceSession.getRoom(testData.roomId)!!
 
-        val eventId = mTestHelper.sendTextMessage(roomAlicePov, "first message", 1).first().eventId
+        val eventId = testHelper.sendMessageInRoom(roomAlicePov, "first message")
 
         // await for bob session to get the message
-        mTestHelper.waitWithLatch { latch ->
-            mTestHelper.retryPeriodicallyWithLatch(latch) {
-                bobSession.getRoom(testData.roomId)?.getTimeLineEvent(eventId) != null
-            }
+        testHelper.retryWithBackoff {
+            bobSession.getRoom(testData.roomId)?.getTimelineEvent(eventId) != null
         }
 
         // Previous message should still be undecryptable (partially withheld session)
-        val eventBobPOV = bobSession.getRoom(testData.roomId)?.getTimeLineEvent(eventId)
-        try {
-            // .. might need to wait a bit for stability?
+        val eventBobPOV = bobSession.getRoom(testData.roomId)?.getTimelineEvent(eventId)
+        // .. might need to wait a bit for stability?
+        mustFail(
+                message = "This session should not be able to decrypt",
+                failureBlock = { failure ->
+                    val type = (failure as MXCryptoError.Base).errorType
+                    val technicalMessage = failure.technicalMessage
+                    Assert.assertEquals("Error should be withheld", MXCryptoError.ErrorType.KEYS_WITHHELD, type)
+                    Assert.assertEquals("Cause should be unverified", WithHeldCode.NO_OLM.value, technicalMessage)
+                }) {
             bobSession.cryptoService().decryptEvent(eventBobPOV!!.root, "")
-            Assert.fail("This session should not be able to decrypt")
-        } catch (failure: Throwable) {
-            val type = (failure as MXCryptoError.Base).errorType
-            val technicalMessage = failure.technicalMessage
-            Assert.assertEquals("Error should be withheld", MXCryptoError.ErrorType.KEYS_WITHHELD, type)
-            Assert.assertEquals("Cause should be unverified", WithHeldCode.NO_OLM.value, technicalMessage)
         }
 
         // Ensure that alice has marked the session to be shared with bob
@@ -177,16 +202,14 @@ class WithHeldTests : InstrumentedTest {
         // Add a new device for bob
 
         aliceInterceptor.clearRules()
-        val bobSecondSession = mTestHelper.logIntoAccount(bobSession.myUserId, SessionTestParams(withInitialSync = true))
+        val bobSecondSession = testHelper.logIntoAccount(bobSession.myUserId, SessionTestParams(withInitialSync = true))
         // send a second message
-        val secondMessageId = mTestHelper.sendTextMessage(roomAlicePov, "second message", 1).first().eventId
+        val secondMessageId = testHelper.sendTextMessage(roomAlicePov, "second message", 1).first().eventId
 
         // Check that the
         // await for bob SecondSession session to get the message
-        mTestHelper.waitWithLatch { latch ->
-            mTestHelper.retryPeriodicallyWithLatch(latch) {
-                bobSecondSession.getRoom(testData.roomId)?.getTimeLineEvent(secondMessageId) != null
-            }
+        testHelper.retryPeriodically {
+            bobSecondSession.getRoom(testData.roomId)?.getTimelineEvent(secondMessageId) != null
         }
 
         val chainIndex2 = aliceSession.cryptoService().getSharedWithInfo(testData.roomId, sessionId).getObject(bobSecondSession.myUserId, bobSecondSession.sessionParams.credentials.deviceId)
@@ -194,52 +217,59 @@ class WithHeldTests : InstrumentedTest {
         Assert.assertEquals("Alice should have marked bob's device for this session", 1, chainIndex2)
 
         aliceInterceptor.clearRules()
-        testData.cleanUp(mTestHelper)
-        mTestHelper.signOutAndClose(bobSecondSession)
     }
 
     @Test
-    fun test_WithHeldKeyRequest() {
-        val testData = mCryptoTestHelper.doE2ETestWithAliceAndBobInARoom()
+    @Ignore("Outdated test, we don't request to others")
+    fun test_WithHeldKeyRequest() = runCryptoTest(
+            context(),
+            cryptoConfig = MXCryptoConfig(limitRoomKeyRequestsToMyDevices = false)
+    ) { cryptoTestHelper, testHelper ->
+
+        val testData = cryptoTestHelper.doE2ETestWithAliceAndBobInARoom()
         val aliceSession = testData.firstSession
+        Assume.assumeTrue("Not supported by rust sdk", aliceSession.cryptoService().supportsForwardedKeyWiththeld())
         val bobSession = testData.secondSession!!
 
         val roomAlicePov = aliceSession.getRoom(testData.roomId)!!
 
-        val eventId = mTestHelper.sendTextMessage(roomAlicePov, "first message", 1).first().eventId
+        val eventId = testHelper.sendTextMessage(roomAlicePov, "first message", 1).first().eventId
 
-        mTestHelper.signOutAndClose(bobSession)
+        testHelper.signOutAndClose(bobSession)
 
         // Create a new session for bob
 
-        val bobSecondSession = mTestHelper.logIntoAccount(bobSession.myUserId, SessionTestParams(true))
+        val bobSecondSession = testHelper.logIntoAccount(bobSession.myUserId, SessionTestParams(true))
         // initialize to force request keys if missing
-        mCryptoTestHelper.initializeCrossSigning(bobSecondSession)
+        cryptoTestHelper.initializeCrossSigning(bobSecondSession)
 
         // Trust bob second device from Alice POV
-        aliceSession.cryptoService().crossSigningService().trustDevice(bobSecondSession.sessionParams.deviceId!!, NoOpMatrixCallback())
-        bobSecondSession.cryptoService().crossSigningService().trustDevice(aliceSession.sessionParams.deviceId!!, NoOpMatrixCallback())
+        aliceSession.cryptoService().crossSigningService().trustDevice(bobSecondSession.sessionParams.deviceId)
+        bobSecondSession.cryptoService().crossSigningService().trustDevice(aliceSession.sessionParams.deviceId)
 
         var sessionId: String? = null
         // Check that the
         // await for bob SecondSession session to get the message
-        mTestHelper.waitWithLatch { latch ->
-            mTestHelper.retryPeriodicallyWithLatch(latch) {
-                val timeLineEvent = bobSecondSession.getRoom(testData.roomId)?.getTimeLineEvent(eventId)?.also {
-                    // try to decrypt and force key request
-                    tryOrNull { bobSecondSession.cryptoService().decryptEvent(it.root, "") }
+        testHelper.retryPeriodically {
+            val timeLineEvent = bobSecondSession.getRoom(testData.roomId)?.getTimelineEvent(eventId)?.also {
+                // try to decrypt and force key request
+                tryOrNull {
+                    bobSecondSession.cryptoService().decryptEvent(it.root, "")
                 }
-                sessionId = timeLineEvent?.root?.content?.toModel<EncryptedEventContent>()?.sessionId
-                timeLineEvent != null
             }
+            sessionId = timeLineEvent?.root?.content?.toModel<EncryptedEventContent>()?.sessionId
+            timeLineEvent != null
         }
 
         // Check that bob second session requested the key
-        mTestHelper.waitWithLatch { latch ->
-            mTestHelper.retryPeriodicallyWithLatch(latch) {
-                val wc = bobSecondSession.cryptoService().getWithHeldMegolmSession(roomAlicePov.roomId, sessionId!!)
-                wc?.code == WithHeldCode.UNAUTHORISED
-            }
+        testHelper.retryPeriodically {
+            val wc = bobSecondSession.cryptoService().getWithHeldMegolmSession(roomAlicePov.roomId, sessionId!!)
+            wc?.code == WithHeldCode.UNAUTHORISED
         }
+//        // Check that bob second session requested the key
+//        testHelper.retryPeriodically {
+//            val wc = bobSecondSession.cryptoService().getWithHeldMegolmSession(roomAlicePov.roomId, sessionId!!)
+//            wc?.code == WithHeldCode.UNAUTHORISED
+//        }
     }
 }

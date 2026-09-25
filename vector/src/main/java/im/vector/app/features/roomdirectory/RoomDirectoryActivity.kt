@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roomdirectory
@@ -19,20 +10,29 @@ package im.vector.app.features.roomdirectory
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
+import androidx.lifecycle.lifecycleScope
 import com.airbnb.mvrx.viewModel
 import com.airbnb.mvrx.withState
-import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.extensions.addFragment
 import im.vector.app.core.extensions.addFragmentToBackstack
+import im.vector.app.core.extensions.popBackstack
 import im.vector.app.core.platform.VectorBaseActivity
 import im.vector.app.databinding.ActivitySimpleBinding
-import im.vector.app.features.roomdirectory.createroom.CreateRoomFragment
+import im.vector.app.features.analytics.plan.MobileScreen
+import im.vector.app.features.analytics.plan.ViewRoom
+import im.vector.app.features.matrixto.MatrixToBottomSheet
+import im.vector.app.features.navigation.Navigator
 import im.vector.app.features.roomdirectory.createroom.CreateRoomArgs
+import im.vector.app.features.roomdirectory.createroom.CreateRoomFragment
 import im.vector.app.features.roomdirectory.picker.RoomDirectoryPickerFragment
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import javax.inject.Inject
 
-class RoomDirectoryActivity : VectorBaseActivity<ActivitySimpleBinding>() {
+@AndroidEntryPoint
+class RoomDirectoryActivity : VectorBaseActivity<ActivitySimpleBinding>(), MatrixToBottomSheet.InteractionListener {
 
     @Inject lateinit var roomDirectoryViewModelFactory: RoomDirectoryViewModel.Factory
     private val roomDirectoryViewModel: RoomDirectoryViewModel by viewModel()
@@ -42,12 +42,12 @@ class RoomDirectoryActivity : VectorBaseActivity<ActivitySimpleBinding>() {
 
     override fun getCoordinatorLayout() = views.coordinatorLayout
 
-    override fun injectWith(injector: ScreenComponent) {
-        injector.inject(this)
-    }
+    override val rootView: View
+        get() = views.coordinatorLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        analyticsScreenName = MobileScreen.ScreenName.RoomDirectory
         sharedActionViewModel = viewModelProvider.get(RoomDirectorySharedActionViewModel::class.java)
 
         if (isFirstCreation()) {
@@ -55,32 +55,41 @@ class RoomDirectoryActivity : VectorBaseActivity<ActivitySimpleBinding>() {
         }
 
         sharedActionViewModel
-                .observe()
-                .subscribe { sharedAction ->
+                .stream()
+                .onEach { sharedAction ->
                     when (sharedAction) {
-                        is RoomDirectorySharedAction.Back           -> onBackPressed()
-                        is RoomDirectorySharedAction.CreateRoom     -> {
+                        is RoomDirectorySharedAction.Back -> popBackstack()
+                        is RoomDirectorySharedAction.CreateRoom -> {
                             // Transmit the filter to the CreateRoomFragment
                             withState(roomDirectoryViewModel) {
                                 addFragmentToBackstack(
-                                        R.id.simpleFragmentContainer,
+                                        views.simpleFragmentContainer,
                                         CreateRoomFragment::class.java,
                                         CreateRoomArgs(it.currentFilter)
                                 )
                             }
                         }
                         is RoomDirectorySharedAction.ChangeProtocol ->
-                            addFragmentToBackstack(R.id.simpleFragmentContainer, RoomDirectoryPickerFragment::class.java)
-                        is RoomDirectorySharedAction.Close          -> finish()
+                            addFragmentToBackstack(views.simpleFragmentContainer, RoomDirectoryPickerFragment::class.java)
+                        is RoomDirectorySharedAction.Close -> finish()
+                        is RoomDirectorySharedAction.CreateRoomSuccess -> Unit
                     }
                 }
-                .disposeOnDestroy()
+                .launchIn(lifecycleScope)
     }
 
     override fun initUiAndData() {
         if (isFirstCreation()) {
-            addFragment(R.id.simpleFragmentContainer, PublicRoomsFragment::class.java)
+            addFragment(views.simpleFragmentContainer, PublicRoomsFragment::class.java)
         }
+    }
+
+    override fun mxToBottomSheetNavigateToRoom(roomId: String, trigger: ViewRoom.Trigger?) {
+        navigator.openRoom(this, roomId, trigger = trigger)
+    }
+
+    override fun mxToBottomSheetSwitchToSpace(spaceId: String) {
+        navigator.switchToSpace(this, spaceId, Navigator.PostSwitchSpaceAction.None)
     }
 
     companion object {

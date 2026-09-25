@@ -1,18 +1,9 @@
 #!/usr/bin/env python3
 
-#  Copyright (c) 2020 New Vector Ltd
+# Copyright 2020-2024 New Vector Ltd.
 #
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+# Please see LICENSE files in the repository root for full details.
 
 import argparse
 import os
@@ -58,6 +49,9 @@ items = [
     # Need token , ["Capability", baseUrl + "_matrix/client/r0/capabilities", True]
     # Need token , ["Media config", baseUrl + "_matrix/media/r0/config", True]
     # Need token , ["Turn", baseUrl + "_matrix/client/r0/voip/turnServer", True]
+
+    # Only for Synapse
+    , ["Synapse version", baseUrl + "_synapse/admin/v1/server_version", True]
 ]
 
 for item in items:
@@ -65,6 +59,6 @@ for item in items:
     print("# " + item[0] + " (" + item[1] + ")")
     print("====================================================================================================")
     if item[2]:
-        os.system("curl -s -X GET '" + item[1] + "' | python -m json.tool")
+        os.system("curl -s -X GET '" + item[1] + "' | python3 -m json.tool")
     else:
-        os.system("curl -s -X POST --data $'{}' '" + item[1] + "' | python -m json.tool")
+        os.system("curl -s -X POST --data $'{}' '" + item[1] + "' | python3 -m json.tool")

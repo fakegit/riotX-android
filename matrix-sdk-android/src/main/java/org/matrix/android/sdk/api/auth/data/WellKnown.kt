@@ -43,6 +43,7 @@ import org.matrix.android.sdk.api.util.JsonDict
  *    }
  * }
  * </pre>
+ * .
  */
 @JsonClass(generateAdapter = true)
 data class WellKnown(
@@ -53,5 +54,17 @@ data class WellKnown(
         val identityServer: WellKnownBaseConfig? = null,
 
         @Json(name = "m.integrations")
-        val integrations: JsonDict? = null
+        val integrations: JsonDict? = null,
+
+        /**
+         * For delegation of auth via OIDC as per [MSC2965](https://github.com/matrix-org/matrix-spec-proposals/pull/2965).
+         */
+        @Json(name = "org.matrix.msc2965.authentication")
+        val unstableDelegatedAuthConfig: DelegatedAuthConfig? = null,
+
+        /**
+         * If set to true, the SDK will not use the network constraint when configuring Worker for the WorkManager.
+         */
+        @Json(name = "io.element.disable_network_constraint")
+        val disableNetworkConstraint: Boolean? = null,
 )

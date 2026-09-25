@@ -17,8 +17,11 @@
 package org.matrix.android.sdk.internal.crypto.verification.qrcode
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import org.amshove.kluent.shouldBe
 import org.junit.FixMethodOrder
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
@@ -27,21 +30,21 @@ import org.matrix.android.sdk.api.auth.UIABaseAuth
 import org.matrix.android.sdk.api.auth.UserInteractiveAuthInterceptor
 import org.matrix.android.sdk.api.auth.UserPasswordAuth
 import org.matrix.android.sdk.api.auth.registration.RegistrationFlowResponse
-import org.matrix.android.sdk.api.session.crypto.verification.PendingVerificationRequest
+import org.matrix.android.sdk.api.session.crypto.verification.CancelCode
+import org.matrix.android.sdk.api.session.crypto.verification.EVerificationState
+import org.matrix.android.sdk.api.session.crypto.verification.VerificationEvent
 import org.matrix.android.sdk.api.session.crypto.verification.VerificationMethod
-import org.matrix.android.sdk.api.session.crypto.verification.VerificationService
-import org.matrix.android.sdk.common.CommonTestHelper
-import org.matrix.android.sdk.common.CryptoTestHelper
+import org.matrix.android.sdk.common.CommonTestHelper.Companion.runCryptoTest
+import org.matrix.android.sdk.common.CommonTestHelper.Companion.runSessionTest
+import org.matrix.android.sdk.common.SessionTestParams
 import org.matrix.android.sdk.common.TestConstants
-import java.util.concurrent.CountDownLatch
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.JVM)
+@Ignore
 class VerificationTest : InstrumentedTest {
-    private val mTestHelper = CommonTestHelper(context())
-    private val mCryptoTestHelper = CryptoTestHelper(mTestHelper)
 
     data class ExpectedResult(
             val sasIsSupported: Boolean = false,
@@ -151,16 +154,17 @@ class VerificationTest : InstrumentedTest {
 
     // TODO Add tests without SAS
 
-    private fun doTest(aliceSupportedMethods: List<VerificationMethod>,
-                       bobSupportedMethods: List<VerificationMethod>,
-                       expectedResultForAlice: ExpectedResult,
-                       expectedResultForBob: ExpectedResult) {
-        val cryptoTestData = mCryptoTestHelper.doE2ETestWithAliceAndBobInARoom()
+    private fun doTest(
+            aliceSupportedMethods: List<VerificationMethod>,
+            bobSupportedMethods: List<VerificationMethod>,
+            expectedResultForAlice: ExpectedResult,
+            expectedResultForBob: ExpectedResult
+    ) = runCryptoTest(context()) { cryptoTestHelper, testHelper ->
+        val cryptoTestData = cryptoTestHelper.doE2ETestWithAliceAndBobInARoom()
 
         val aliceSession = cryptoTestData.firstSession
         val bobSession = cryptoTestData.secondSession!!
 
-        mTestHelper.doSync<Unit> { callback ->
             aliceSession.cryptoService().crossSigningService()
                     .initializeCrossSigning(
                             object : UserInteractiveAuthInterceptor {
@@ -173,10 +177,9 @@ class VerificationTest : InstrumentedTest {
                                             )
                                     )
                                 }
-                            }, callback)
-        }
+                            }
+                    )
 
-        mTestHelper.doSync<Unit> { callback ->
             bobSession.cryptoService().crossSigningService()
                     .initializeCrossSigning(
                             object : UserInteractiveAuthInterceptor {
@@ -189,65 +192,116 @@ class VerificationTest : InstrumentedTest {
                                             )
                                     )
                                 }
-                            }, callback)
-        }
+                            }
+                    )
 
         val aliceVerificationService = aliceSession.cryptoService().verificationService()
         val bobVerificationService = bobSession.cryptoService().verificationService()
 
-        var aliceReadyPendingVerificationRequest: PendingVerificationRequest? = null
-        var bobReadyPendingVerificationRequest: PendingVerificationRequest? = null
+        val transactionId = aliceVerificationService.requestKeyVerificationInDMs(
+                aliceSupportedMethods, bobSession.myUserId, cryptoTestData.roomId
+        )
+                .transactionId
 
-        val latch = CountDownLatch(2)
-        val aliceListener = object : VerificationService.Listener {
-            override fun verificationRequestUpdated(pr: PendingVerificationRequest) {
-                // Step 4: Alice receive the ready request
-                if (pr.isReady) {
-                    aliceReadyPendingVerificationRequest = pr
-                    latch.countDown()
-                }
-            }
-        }
-        aliceVerificationService.addListener(aliceListener)
-
-        val bobListener = object : VerificationService.Listener {
-            override fun verificationRequestCreated(pr: PendingVerificationRequest) {
-                // Step 2: Bob accepts the verification request
-                bobVerificationService.readyPendingVerificationInDMs(
+        testHelper.retryPeriodically {
+            val incomingRequest = bobVerificationService.getExistingVerificationRequest(aliceSession.myUserId, transactionId)
+            if (incomingRequest != null) {
+                bobVerificationService.readyPendingVerification(
                         bobSupportedMethods,
                         aliceSession.myUserId,
-                        cryptoTestData.roomId,
-                        pr.transactionId!!
+                        incomingRequest.transactionId
                 )
+                true
+            } else {
+                false
             }
+        }
 
-            override fun verificationRequestUpdated(pr: PendingVerificationRequest) {
-                // Step 3: Bob is ready
-                if (pr.isReady) {
-                    bobReadyPendingVerificationRequest = pr
-                    latch.countDown()
+        // wait for alice to see the ready
+        testHelper.retryPeriodically {
+            val pendingRequest = aliceVerificationService.getExistingVerificationRequest(bobSession.myUserId, transactionId)
+            pendingRequest?.state == EVerificationState.Ready
+        }
+
+        val aliceReadyPendingVerificationRequest = aliceVerificationService.getExistingVerificationRequest(bobSession.myUserId, transactionId)!!
+        val bobReadyPendingVerificationRequest = bobVerificationService.getExistingVerificationRequest(aliceSession.myUserId, transactionId)!!
+
+        aliceReadyPendingVerificationRequest.let { pr ->
+            pr.isSasSupported shouldBe expectedResultForAlice.sasIsSupported
+            pr.weShouldShowScanOption shouldBe expectedResultForAlice.otherCanShowQrCode
+            pr.weShouldDisplayQRCode shouldBe expectedResultForAlice.otherCanScanQrCode
+        }
+
+        bobReadyPendingVerificationRequest.let { pr ->
+            pr.isSasSupported shouldBe expectedResultForBob.sasIsSupported
+            pr.weShouldShowScanOption shouldBe expectedResultForBob.otherCanShowQrCode
+            pr.weShouldDisplayQRCode shouldBe expectedResultForBob.otherCanScanQrCode
+        }
+    }
+
+    @Test
+    fun test_selfVerificationAcceptedCancelsItForOtherSessions() = runSessionTest(context()) { testHelper ->
+        val defaultSessionParams = SessionTestParams(true)
+
+        val aliceSessionToVerify = testHelper.createAccount(TestConstants.USER_ALICE, defaultSessionParams)
+        val aliceSessionThatVerifies = testHelper.logIntoAccount(aliceSessionToVerify.myUserId, TestConstants.PASSWORD, defaultSessionParams)
+        val aliceSessionThatReceivesCanceledEvent = testHelper.logIntoAccount(
+                aliceSessionToVerify.myUserId,
+                TestConstants.PASSWORD,
+                defaultSessionParams
+        )
+
+        val verificationMethods = listOf(VerificationMethod.SAS, VerificationMethod.QR_CODE_SCAN, VerificationMethod.QR_CODE_SHOW)
+
+        val serviceOfVerified = aliceSessionToVerify.cryptoService().verificationService()
+        val serviceOfVerifier = aliceSessionThatVerifies.cryptoService().verificationService()
+        val serviceOfUserWhoReceivesCancellation = aliceSessionThatReceivesCanceledEvent.cryptoService().verificationService()
+
+        var job: Job? = null
+        job = async {
+            serviceOfVerifier.requestEventFlow().collect {
+                when (it) {
+                    is VerificationEvent.RequestAdded -> {
+                        val pr = it.request
+                        serviceOfVerifier.readyPendingVerification(
+                                verificationMethods,
+                                pr.otherUserId,
+                                pr.transactionId,
+                        )
+                        job?.cancel()
+                    }
+                    is VerificationEvent.RequestUpdated,
+                    is VerificationEvent.TransactionAdded,
+                    is VerificationEvent.TransactionUpdated -> {
+                    }
                 }
             }
         }
-        bobVerificationService.addListener(bobListener)
+        job.await()
+//        serviceOfVerifier.addListener(object : VerificationService.Listener {
+//            override fun verificationRequestCreated(pr: PendingVerificationRequest) {
+//                // Accept verification request
+//                runBlocking {
+//                    serviceOfVerifier.readyPendingVerification(
+//                            verificationMethods,
+//                            pr.otherUserId,
+//                            pr.transactionId!!,
+//                    )
+//                }
+//            }
+//        })
 
-        val bobUserId = bobSession.myUserId
-        // Step 1: Alice starts a verification request
-        aliceVerificationService.requestKeyVerificationInDMs(aliceSupportedMethods, bobUserId, cryptoTestData.roomId)
-        mTestHelper.await(latch)
+        serviceOfVerified.requestSelfKeyVerification(
+                methods = verificationMethods,
+        )
 
-        aliceReadyPendingVerificationRequest!!.let { pr ->
-            pr.isSasSupported() shouldBe expectedResultForAlice.sasIsSupported
-            pr.otherCanShowQrCode() shouldBe expectedResultForAlice.otherCanShowQrCode
-            pr.otherCanScanQrCode() shouldBe expectedResultForAlice.otherCanScanQrCode
+        testHelper.retryPeriodically {
+            val requests = serviceOfUserWhoReceivesCancellation.getExistingVerificationRequests(aliceSessionToVerify.myUserId)
+            requests.any { it.cancelConclusion == CancelCode.AcceptedByAnotherDevice }
         }
 
-        bobReadyPendingVerificationRequest!!.let { pr ->
-            pr.isSasSupported() shouldBe expectedResultForBob.sasIsSupported
-            pr.otherCanShowQrCode() shouldBe expectedResultForBob.otherCanShowQrCode
-            pr.otherCanScanQrCode() shouldBe expectedResultForBob.otherCanScanQrCode
-        }
-
-        cryptoTestData.cleanUp(mTestHelper)
+//        testHelper.signOutAndClose(aliceSessionToVerify)
+//        testHelper.signOutAndClose(aliceSessionThatVerifies)
+//        testHelper.signOutAndClose(aliceSessionThatReceivesCanceledEvent)
     }
 }

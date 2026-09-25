@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home.room.detail.timeline.factory
@@ -27,22 +18,26 @@ import im.vector.app.features.home.room.detail.timeline.helper.MessageItemAttrib
 import im.vector.app.features.home.room.detail.timeline.item.MessageTextItem_
 import im.vector.app.features.home.room.detail.timeline.tools.createLinkMovementMethod
 import im.vector.app.features.settings.VectorPreferences
+import im.vector.lib.core.utils.epoxy.charsequence.toEpoxyCharSequence
+import im.vector.lib.strings.CommonStrings
 import me.gujun.android.span.image
 import me.gujun.android.span.span
 import org.matrix.android.sdk.api.session.crypto.MXCryptoError
 import org.matrix.android.sdk.api.session.events.model.EventType
+import org.matrix.android.sdk.api.session.events.model.content.EncryptedEventContent
 import org.matrix.android.sdk.api.session.events.model.toModel
-import org.matrix.android.sdk.internal.crypto.model.event.EncryptedEventContent
 import javax.inject.Inject
 
 // This class handles timeline events who haven't been successfully decrypted
-class EncryptedItemFactory @Inject constructor(private val messageInformationDataFactory: MessageInformationDataFactory,
-                                               private val colorProvider: ColorProvider,
-                                               private val stringProvider: StringProvider,
-                                               private val avatarSizeProvider: AvatarSizeProvider,
-                                               private val drawableProvider: DrawableProvider,
-                                               private val attributesFactory: MessageItemAttributesFactory,
-                                               private val vectorPreferences: VectorPreferences) {
+class EncryptedItemFactory @Inject constructor(
+        private val messageInformationDataFactory: MessageInformationDataFactory,
+        private val colorProvider: ColorProvider,
+        private val stringProvider: StringProvider,
+        private val avatarSizeProvider: AvatarSizeProvider,
+        private val drawableProvider: DrawableProvider,
+        private val attributesFactory: MessageItemAttributesFactory,
+        private val vectorPreferences: VectorPreferences
+) {
 
     fun create(params: TimelineItemFactoryParams): VectorEpoxyModel<*>? {
         val event = params.event
@@ -55,22 +50,22 @@ class EncryptedItemFactory @Inject constructor(private val messageInformationDat
                 val spannableStr = if (vectorPreferences.developerMode()) {
                     val errorDescription =
                             if (cryptoError == MXCryptoError.ErrorType.UNKNOWN_INBOUND_SESSION_ID) {
-                                stringProvider.getString(R.string.notice_crypto_error_unkwown_inbound_session_id)
+                                stringProvider.getString(CommonStrings.notice_crypto_error_unknown_inbound_session_id)
                             } else {
                                 // TODO i18n
                                 cryptoError?.name
                             }
 
-                    val message = stringProvider.getString(R.string.encrypted_message).takeIf { cryptoError == null }
-                            ?: stringProvider.getString(R.string.notice_crypto_unable_to_decrypt, errorDescription)
+                    val message = stringProvider.getString(CommonStrings.encrypted_message).takeIf { cryptoError == null }
+                            ?: stringProvider.getString(CommonStrings.notice_crypto_unable_to_decrypt, errorDescription)
                     span(message) {
                         textStyle = "italic"
-                        textColor = colorProvider.getColorFromAttribute(R.attr.riotx_text_secondary)
+                        textColor = colorProvider.getColorFromAttribute(im.vector.lib.ui.styles.R.attr.vctr_content_secondary)
                     }
                 } else {
-                    val colorFromAttribute = colorProvider.getColorFromAttribute(R.attr.riotx_text_secondary)
+                    val colorFromAttribute = colorProvider.getColorFromAttribute(im.vector.lib.ui.styles.R.attr.vctr_content_secondary)
                     if (cryptoError == null) {
-                        span(stringProvider.getString(R.string.encrypted_message)) {
+                        span(stringProvider.getString(CommonStrings.encrypted_message)) {
                             textStyle = "italic"
                             textColor = colorFromAttribute
                         }
@@ -82,19 +77,19 @@ class EncryptedItemFactory @Inject constructor(private val messageInformationDat
                                         image(it, "baseline")
                                         +" "
                                     }
-                                    span(stringProvider.getString(R.string.notice_crypto_unable_to_decrypt_final)) {
+                                    span(stringProvider.getString(CommonStrings.notice_crypto_unable_to_decrypt_final)) {
                                         textStyle = "italic"
                                         textColor = colorFromAttribute
                                     }
                                 }
                             }
-                            else                                  -> {
+                            else -> {
                                 span {
                                     drawableProvider.getDrawable(R.drawable.ic_clock, colorFromAttribute)?.let {
                                         image(it, "baseline")
                                         +" "
                                     }
-                                    span(stringProvider.getString(R.string.notice_crypto_unable_to_decrypt_friendly)) {
+                                    span(stringProvider.getString(CommonStrings.notice_crypto_unable_to_decrypt_friendly)) {
                                         textStyle = "italic"
                                         textColor = colorFromAttribute
                                     }
@@ -105,15 +100,23 @@ class EncryptedItemFactory @Inject constructor(private val messageInformationDat
                 }
 
                 val informationData = messageInformationDataFactory.create(params)
-                val attributes = attributesFactory.create(event.root.content.toModel<EncryptedEventContent>(), informationData, params.callback)
+                val threadDetails = if (params.isFromThreadTimeline()) null else event.root.threadDetails
+                val attributes = attributesFactory.create(
+                        messageContent = event.root.content.toModel<EncryptedEventContent>(),
+                        informationData = informationData,
+                        callback = params.callback,
+                        threadDetails = threadDetails,
+                        reactionsSummaryEvents = params.reactionsSummaryEvents
+                )
                 return MessageTextItem_()
+                        .layout(informationData.messageLayout.layoutRes)
                         .leftGuideline(avatarSizeProvider.leftGuideline)
                         .highlighted(params.isHighlighted)
                         .attributes(attributes)
-                        .message(spannableStr)
+                        .message(spannableStr.toEpoxyCharSequence())
                         .movementMethod(createLinkMovementMethod(params.callback))
             }
-            else                                             -> null
+            else -> null
         }
     }
 }

@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.reactions
 
@@ -21,46 +12,55 @@ import android.content.Intent
 import android.graphics.Typeface
 import android.util.TypedValue
 import android.view.Menu
-import android.view.MenuInflater
 import android.view.MenuItem
+import android.view.View
 import android.widget.SearchView
-import androidx.appcompat.widget.Toolbar
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import com.airbnb.mvrx.viewModel
 import com.google.android.material.tabs.TabLayout
-import com.jakewharton.rxbinding3.widget.queryTextChanges
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.EmojiCompatFontProvider
 import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
 import im.vector.app.core.extensions.observeEvent
 import im.vector.app.core.platform.VectorBaseActivity
+import im.vector.app.core.platform.VectorMenuProvider
 import im.vector.app.databinding.ActivityEmojiReactionPickerBinding
 import im.vector.app.features.reactions.data.EmojiDataSource
-import io.reactivex.android.schedulers.AndroidSchedulers
-
-import timber.log.Timber
-import java.util.concurrent.TimeUnit
+import im.vector.lib.core.utils.flow.throttleFirst
+import im.vector.lib.strings.CommonStrings
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import reactivecircus.flowbinding.android.widget.queryTextChanges
 import javax.inject.Inject
 
 /**
  *
- * TODO: Loading indicator while getting emoji data source?
- * TODO: Finish Refactor to vector base activity
+ * TODO Loading indicator while getting emoji data source?
+ * TODO Finish Refactor to vector base activity
  */
-class EmojiReactionPickerActivity : VectorBaseActivity<ActivityEmojiReactionPickerBinding>(),
-        EmojiCompatFontProvider.FontProviderListener {
+@AndroidEntryPoint
+class EmojiReactionPickerActivity :
+        VectorBaseActivity<ActivityEmojiReactionPickerBinding>(),
+        EmojiCompatFontProvider.FontProviderListener,
+        VectorMenuProvider {
 
     lateinit var viewModel: EmojiChooserViewModel
 
     override fun getMenuRes() = R.menu.menu_emoji_reaction_picker
 
+    override fun handleMenuItemSelected(item: MenuItem) = false
+
     override fun getBinding() = ActivityEmojiReactionPickerBinding.inflate(layoutInflater)
 
     override fun getCoordinatorLayout() = views.coordinatorLayout
 
-    override fun getTitleRes() = R.string.title_activity_emoji_reaction_picker
+    override val rootView: View
+        get() = views.coordinatorLayout
 
-    @Inject lateinit var emojiSearchResultViewModelFactory: EmojiSearchResultViewModel.Factory
+    override fun getTitleRes() = CommonStrings.title_activity_emoji_reaction_picker
+
     @Inject lateinit var emojiCompatFontProvider: EmojiCompatFontProvider
     @Inject lateinit var emojiDataSource: EmojiDataSource
 
@@ -78,12 +78,9 @@ class EmojiReactionPickerActivity : VectorBaseActivity<ActivityEmojiReactionPick
         }
     }
 
-    override fun injectWith(injector: ScreenComponent) {
-        injector.inject(this)
-    }
-
     override fun initUiAndData() {
-        configureToolbar(views.emojiPickerToolbar)
+        setupToolbar(views.emojiPickerToolbar)
+                .allowBack()
         emojiCompatFontProvider.let {
             EmojiDrawView.configureTextPaint(this, it.typeface)
             it.addListener(this)
@@ -92,17 +89,19 @@ class EmojiReactionPickerActivity : VectorBaseActivity<ActivityEmojiReactionPick
         viewModel = viewModelProvider.get(EmojiChooserViewModel::class.java)
 
         viewModel.eventId = intent.getStringExtra(EXTRA_EVENT_ID)
-
-        emojiDataSource.rawData.categories.forEach { category ->
-            val s = category.emojis[0]
-            views.tabs.newTab()
-                    .also { tab ->
-                        tab.text = emojiDataSource.rawData.emojis[s]!!.emoji
-                        tab.contentDescription = category.name
-                    }
-                    .also { tab ->
-                        views.tabs.addTab(tab)
-                    }
+        lifecycleScope.launch {
+            val rawData = emojiDataSource.rawData.await()
+            rawData.categories.forEach { category ->
+                val s = category.emojis[0]
+                views.tabs.newTab()
+                        .also { tab ->
+                            tab.text = rawData.emojis[s]!!.emoji
+                            tab.contentDescription = category.name
+                        }
+                        .also { tab ->
+                            views.tabs.addTab(tab)
+                        }
+            }
         }
         views.tabs.addOnTabSelectedListener(tabLayoutSelectionListener)
 
@@ -139,46 +138,47 @@ class EmojiReactionPickerActivity : VectorBaseActivity<ActivityEmojiReactionPick
         super.onDestroy()
     }
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        val inflater: MenuInflater = menuInflater
-        inflater.inflate(getMenuRes(), menu)
-
+    override fun handlePostCreateMenu(menu: Menu) {
         val searchItem = menu.findItem(R.id.search)
         (searchItem.actionView as? SearchView)?.let { searchView ->
             searchItem.setOnActionExpandListener(object : MenuItem.OnActionExpandListener {
-                override fun onMenuItemActionExpand(p0: MenuItem?): Boolean {
+                override fun onMenuItemActionExpand(p0: MenuItem): Boolean {
                     searchView.isIconified = false
                     searchView.requestFocusFromTouch()
                     // we want to force the tool bar as visible even if hidden with scroll flags
-                    findViewById<Toolbar>(R.id.toolbar)?.minimumHeight = getActionBarSize()
+                    views.emojiPickerToolbar.minimumHeight = getActionBarSize()
                     return true
                 }
 
-                override fun onMenuItemActionCollapse(p0: MenuItem?): Boolean {
+                override fun onMenuItemActionCollapse(p0: MenuItem): Boolean {
                     // when back, clear all search
-                    findViewById<Toolbar>(R.id.toolbar)?.minimumHeight = 0
+                    views.emojiPickerToolbar.minimumHeight = 0
                     searchView.setQuery("", true)
                     return true
                 }
             })
 
+            searchView.setOnCloseListener {
+                currentFocus?.clearFocus()
+                searchItem.collapseActionView()
+                true
+            }
+
             searchView.queryTextChanges()
-                    .throttleWithTimeout(600, TimeUnit.MILLISECONDS)
-                    .doOnError { err -> Timber.e(err) }
-                    .observeOn(AndroidSchedulers.mainThread())
-                    .subscribe { query ->
+                    .throttleFirst(600)
+                    .onEach { query ->
                         onQueryText(query.toString())
                     }
-                    .disposeOnDestroy()
+                    .launchIn(lifecycleScope)
         }
-        return true
+        searchItem.expandActionView()
     }
 
     // TODO move to ThemeUtils when core module is created
     private fun getActionBarSize(): Int {
         return try {
             val typedValue = TypedValue()
-            theme.resolveAttribute(R.attr.actionBarSize, typedValue, true)
+            theme.resolveAttribute(com.google.android.material.R.attr.actionBarSize, typedValue, true)
             TypedValue.complexToDimensionPixelSize(typedValue.data, resources.displayMetrics)
         } catch (e: Exception) {
             // Timber.e(e, "Unable to get color")

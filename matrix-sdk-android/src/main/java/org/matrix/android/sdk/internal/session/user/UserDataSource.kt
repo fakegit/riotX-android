@@ -17,7 +17,7 @@
 package org.matrix.android.sdk.internal.session.user
 
 import androidx.lifecycle.LiveData
-import androidx.lifecycle.Transformations
+import androidx.lifecycle.map
 import androidx.paging.DataSource
 import androidx.paging.LivePagedListBuilder
 import androidx.paging.PagedList
@@ -36,8 +36,10 @@ import org.matrix.android.sdk.internal.database.query.where
 import org.matrix.android.sdk.internal.di.SessionDatabase
 import javax.inject.Inject
 
-internal class UserDataSource @Inject constructor(@SessionDatabase private val monarchy: Monarchy,
-                                                  private val realmSessionProvider: RealmSessionProvider) {
+internal class UserDataSource @Inject constructor(
+        @SessionDatabase private val monarchy: Monarchy,
+        private val realmSessionProvider: RealmSessionProvider
+) {
 
     private val realmDataSourceFactory: Monarchy.RealmDataSourceFactory<UserEntity> by lazy {
         monarchy.createDataSourceFactory { realm ->
@@ -64,12 +66,14 @@ internal class UserDataSource @Inject constructor(@SessionDatabase private val m
         }
     }
 
+    fun getUserOrDefault(userId: String): User = getUser(userId) ?: User(userId)
+
     fun getUserLive(userId: String): LiveData<Optional<User>> {
         val liveData = monarchy.findAllMappedWithChanges(
                 { UserEntity.where(it, userId) },
                 { it.asDomain() }
         )
-        return Transformations.map(liveData) { results ->
+        return liveData.map { results ->
             results.firstOrNull().toOptional()
         }
     }

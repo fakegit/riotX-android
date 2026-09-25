@@ -19,9 +19,9 @@ package org.matrix.android.sdk.internal.session.room.state
 import android.net.Uri
 import androidx.lifecycle.LiveData
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
-import org.matrix.android.sdk.api.query.QueryStringValue
+import dagger.assisted.AssistedInject
+import org.matrix.android.sdk.api.query.QueryStateEventValue
 import org.matrix.android.sdk.api.session.events.model.Event
 import org.matrix.android.sdk.api.session.events.model.EventType
 import org.matrix.android.sdk.api.session.events.model.toContent
@@ -29,16 +29,22 @@ import org.matrix.android.sdk.api.session.room.model.GuestAccess
 import org.matrix.android.sdk.api.session.room.model.RoomCanonicalAliasContent
 import org.matrix.android.sdk.api.session.room.model.RoomHistoryVisibility
 import org.matrix.android.sdk.api.session.room.model.RoomJoinRules
+import org.matrix.android.sdk.api.session.room.model.RoomJoinRulesAllowEntry
+import org.matrix.android.sdk.api.session.room.model.RoomJoinRulesContent
+import org.matrix.android.sdk.api.session.room.powerlevels.RoomPowerLevels
 import org.matrix.android.sdk.api.session.room.state.StateService
 import org.matrix.android.sdk.api.util.JsonDict
 import org.matrix.android.sdk.api.util.MimeTypes
 import org.matrix.android.sdk.api.util.Optional
 import org.matrix.android.sdk.internal.session.content.FileUploader
+import org.matrix.android.sdk.internal.session.room.powerlevels.getRoomPowerLevels
+import org.matrix.android.sdk.internal.session.room.powerlevels.getRoomPowerLevelsLive
 
-internal class DefaultStateService @AssistedInject constructor(@Assisted private val roomId: String,
-                                                               private val stateEventDataSource: StateEventDataSource,
-                                                               private val sendStateTask: SendStateTask,
-                                                               private val fileUploader: FileUploader
+internal class DefaultStateService @AssistedInject constructor(
+        @Assisted private val roomId: String,
+        private val stateEventDataSource: StateEventDataSource,
+        private val sendStateTask: SendStateTask,
+        private val fileUploader: FileUploader,
 ) : StateService {
 
     @AssistedFactory
@@ -46,41 +52,49 @@ internal class DefaultStateService @AssistedInject constructor(@Assisted private
         fun create(roomId: String): DefaultStateService
     }
 
-    override fun getStateEvent(eventType: String, stateKey: QueryStringValue): Event? {
+    override fun getStateEvent(eventType: String, stateKey: QueryStateEventValue): Event? {
         return stateEventDataSource.getStateEvent(roomId, eventType, stateKey)
     }
 
-    override fun getStateEventLive(eventType: String, stateKey: QueryStringValue): LiveData<Optional<Event>> {
+    override fun getStateEventLive(eventType: String, stateKey: QueryStateEventValue): LiveData<Optional<Event>> {
         return stateEventDataSource.getStateEventLive(roomId, eventType, stateKey)
     }
 
-    override fun getStateEvents(eventTypes: Set<String>, stateKey: QueryStringValue): List<Event> {
+    override fun getStateEvents(eventTypes: Set<String>, stateKey: QueryStateEventValue): List<Event> {
         return stateEventDataSource.getStateEvents(roomId, eventTypes, stateKey)
     }
 
-    override fun getStateEventsLive(eventTypes: Set<String>, stateKey: QueryStringValue): LiveData<List<Event>> {
+    override fun getStateEventsLive(eventTypes: Set<String>, stateKey: QueryStateEventValue): LiveData<List<Event>> {
         return stateEventDataSource.getStateEventsLive(roomId, eventTypes, stateKey)
+    }
+
+    override fun getRoomPowerLevels(): RoomPowerLevels {
+        return stateEventDataSource.getRoomPowerLevels(roomId)
+    }
+
+    override fun getRoomPowerLevelsLive(): LiveData<RoomPowerLevels> {
+        return stateEventDataSource.getRoomPowerLevelsLive(roomId)
     }
 
     override suspend fun sendStateEvent(
             eventType: String,
-            stateKey: String?,
+            stateKey: String,
             body: JsonDict
-    ) {
+    ): String {
         val params = SendStateTask.Params(
                 roomId = roomId,
                 stateKey = stateKey,
                 eventType = eventType,
                 body = body.toSafeJson(eventType)
         )
-        sendStateTask.execute(params)
+        return sendStateTask.executeRetry(params, 3)
     }
 
     private fun JsonDict.toSafeJson(eventType: String): JsonDict {
         // Safe treatment for PowerLevelContent
         return when (eventType) {
             EventType.STATE_ROOM_POWER_LEVELS -> toSafePowerLevelsContentDict()
-            else                              -> this
+            else -> this
         }
     }
 
@@ -88,7 +102,7 @@ internal class DefaultStateService @AssistedInject constructor(@Assisted private
         sendStateEvent(
                 eventType = EventType.STATE_ROOM_TOPIC,
                 body = mapOf("topic" to topic),
-                stateKey = null
+                stateKey = ""
         )
     }
 
@@ -96,7 +110,7 @@ internal class DefaultStateService @AssistedInject constructor(@Assisted private
         sendStateEvent(
                 eventType = EventType.STATE_ROOM_NAME,
                 body = mapOf("name" to name),
-                stateKey = null
+                stateKey = ""
         )
     }
 
@@ -113,7 +127,7 @@ internal class DefaultStateService @AssistedInject constructor(@Assisted private
                                 // Sort for the cleanup
                                 .sorted()
                 ).toContent(),
-                stateKey = null
+                stateKey = ""
         )
     }
 
@@ -121,23 +135,31 @@ internal class DefaultStateService @AssistedInject constructor(@Assisted private
         sendStateEvent(
                 eventType = EventType.STATE_ROOM_HISTORY_VISIBILITY,
                 body = mapOf("history_visibility" to readability),
-                stateKey = null
+                stateKey = ""
         )
     }
 
-    override suspend fun updateJoinRule(joinRules: RoomJoinRules?, guestAccess: GuestAccess?) {
+    override suspend fun updateJoinRule(joinRules: RoomJoinRules?, guestAccess: GuestAccess?, allowList: List<RoomJoinRulesAllowEntry>?) {
         if (joinRules != null) {
+            val body = if (joinRules == RoomJoinRules.RESTRICTED) {
+                RoomJoinRulesContent(
+                        joinRulesStr = RoomJoinRules.RESTRICTED.value,
+                        allowList = allowList
+                ).toContent()
+            } else {
+                mapOf("join_rule" to joinRules)
+            }
             sendStateEvent(
                     eventType = EventType.STATE_ROOM_JOIN_RULES,
-                    body = mapOf("join_rule" to joinRules),
-                    stateKey = null
+                    body = body,
+                    stateKey = ""
             )
         }
         if (guestAccess != null) {
             sendStateEvent(
                     eventType = EventType.STATE_ROOM_GUEST_ACCESS,
                     body = mapOf("guest_access" to guestAccess),
-                    stateKey = null
+                    stateKey = ""
             )
         }
     }
@@ -147,7 +169,7 @@ internal class DefaultStateService @AssistedInject constructor(@Assisted private
         sendStateEvent(
                 eventType = EventType.STATE_ROOM_AVATAR,
                 body = mapOf("url" to response.contentUri),
-                stateKey = null
+                stateKey = ""
         )
     }
 
@@ -155,7 +177,23 @@ internal class DefaultStateService @AssistedInject constructor(@Assisted private
         sendStateEvent(
                 eventType = EventType.STATE_ROOM_AVATAR,
                 body = emptyMap(),
-                stateKey = null
+                stateKey = ""
         )
+    }
+
+    override suspend fun setJoinRulePublic() {
+        updateJoinRule(RoomJoinRules.PUBLIC, null)
+    }
+
+    override suspend fun setJoinRuleInviteOnly() {
+        updateJoinRule(RoomJoinRules.INVITE, null)
+    }
+
+    override suspend fun setJoinRuleRestricted(allowList: List<String>) {
+        // we need to compute correct via parameters and check if PL are correct
+        val allowEntries = allowList.map { spaceId ->
+            RoomJoinRulesAllowEntry.restrictedToRoom(spaceId)
+        }
+        updateJoinRule(RoomJoinRules.RESTRICTED, null, allowEntries)
     }
 }

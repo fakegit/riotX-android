@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.home.room.detail.timeline.edithistory
 
@@ -19,39 +10,29 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import com.airbnb.mvrx.MvRx
 import com.airbnb.mvrx.fragmentViewModel
 import com.airbnb.mvrx.withState
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
 import im.vector.app.core.extensions.cleanup
 import im.vector.app.core.extensions.configureWith
 import im.vector.app.core.platform.VectorBaseBottomSheetDialogFragment
 import im.vector.app.databinding.BottomSheetGenericListWithTitleBinding
 import im.vector.app.features.home.room.detail.timeline.action.TimelineEventFragmentArgs
 import im.vector.app.features.home.room.detail.timeline.item.MessageInformationData
-import im.vector.app.features.html.EventHtmlRenderer
-
+import im.vector.lib.strings.CommonStrings
 import javax.inject.Inject
 
 /**
- * Bottom sheet displaying list of edits for a given event ordered by timestamp
+ * Bottom sheet displaying list of edits for a given event ordered by timestamp.
  */
+@AndroidEntryPoint
 class ViewEditHistoryBottomSheet :
         VectorBaseBottomSheetDialogFragment<BottomSheetGenericListWithTitleBinding>() {
 
     private val viewModel: ViewEditHistoryViewModel by fragmentViewModel(ViewEditHistoryViewModel::class)
 
-    @Inject lateinit var viewEditHistoryViewModelFactory: ViewEditHistoryViewModel.Factory
-    @Inject lateinit var eventHtmlRenderer: EventHtmlRenderer
-
-    private val epoxyController by lazy {
-        ViewEditHistoryEpoxyController(requireContext(), viewModel.dateFormatter, eventHtmlRenderer)
-    }
-
-    override fun injectWith(injector: ScreenComponent) {
-        injector.inject(this)
-    }
+    @Inject lateinit var epoxyController: ViewEditHistoryEpoxyController
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): BottomSheetGenericListWithTitleBinding {
         return BottomSheetGenericListWithTitleBinding.inflate(inflater, container, false)
@@ -61,9 +42,10 @@ class ViewEditHistoryBottomSheet :
         super.onViewCreated(view, savedInstanceState)
         views.bottomSheetRecyclerView.configureWith(
                 epoxyController,
-                showDivider = true,
-                hasFixedSize = false)
-        views.bottomSheetTitle.text = context?.getString(R.string.message_edits)
+                dividerDrawable = R.drawable.divider_horizontal_on_secondary,
+                hasFixedSize = false
+        )
+        views.bottomSheetTitle.text = context?.getString(CommonStrings.message_edits)
     }
 
     override fun onDestroyView() {
@@ -78,14 +60,15 @@ class ViewEditHistoryBottomSheet :
 
     companion object {
         fun newInstance(roomId: String, informationData: MessageInformationData): ViewEditHistoryBottomSheet {
-            val args = Bundle()
-            val parcelableArgs = TimelineEventFragmentArgs(
-                    informationData.eventId,
-                    roomId,
-                    informationData
-            )
-            args.putParcelable(MvRx.KEY_ARG, parcelableArgs)
-            return ViewEditHistoryBottomSheet().apply { arguments = args }
+            return ViewEditHistoryBottomSheet().apply {
+                setArguments(
+                        TimelineEventFragmentArgs(
+                                eventId = informationData.eventId,
+                                roomId = roomId,
+                                informationData = informationData
+                        )
+                )
+            }
         }
     }
 }

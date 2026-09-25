@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.login
@@ -25,20 +16,23 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.autofill.HintConstants
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import com.airbnb.mvrx.args
 import com.google.i18n.phonenumbers.NumberParseException
 import com.google.i18n.phonenumbers.PhoneNumberUtil
-import com.jakewharton.rxbinding3.widget.textChanges
-import im.vector.app.R
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.extensions.hideKeyboard
-import im.vector.app.core.extensions.isEmail
 import im.vector.app.core.extensions.setTextOrHide
 import im.vector.app.databinding.FragmentLoginGenericTextInputFormBinding
+import im.vector.lib.strings.CommonStrings
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.parcelize.Parcelize
 import org.matrix.android.sdk.api.auth.registration.RegisterThreePid
+import org.matrix.android.sdk.api.extensions.isEmail
 import org.matrix.android.sdk.api.failure.Failure
 import org.matrix.android.sdk.api.failure.is401
-import javax.inject.Inject
+import reactivecircus.flowbinding.android.widget.textChanges
 
 enum class TextInputFormFragmentMode {
     SetEmail,
@@ -54,9 +48,11 @@ data class LoginGenericTextInputFormFragmentArgument(
 ) : Parcelable
 
 /**
- * In this screen, the user is asked for a text input
+ * In this screen, the user is asked for a text input.
  */
-class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFragment<FragmentLoginGenericTextInputFormBinding>() {
+@AndroidEntryPoint
+class LoginGenericTextInputFormFragment :
+        AbstractLoginFragment<FragmentLoginGenericTextInputFormBinding>() {
 
     private val params: LoginGenericTextInputFormFragmentArgument by args()
 
@@ -75,16 +71,16 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
     }
 
     private fun setupViews() {
-        views.loginGenericTextInputFormOtherButton.setOnClickListener { onOtherButtonClicked() }
-        views.loginGenericTextInputFormSubmit.setOnClickListener { submit() }
+        views.loginGenericTextInputFormOtherButton.debouncedClicks { onOtherButtonClicked() }
+        views.loginGenericTextInputFormSubmit.debouncedClicks { submit() }
     }
 
     private fun setupAutoFill() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             views.loginGenericTextInputFormTextInput.setAutofillHints(
                     when (params.mode) {
-                        TextInputFormFragmentMode.SetEmail      -> HintConstants.AUTOFILL_HINT_EMAIL_ADDRESS
-                        TextInputFormFragmentMode.SetMsisdn     -> HintConstants.AUTOFILL_HINT_PHONE_NUMBER
+                        TextInputFormFragmentMode.SetEmail -> HintConstants.AUTOFILL_HINT_EMAIL_ADDRESS
+                        TextInputFormFragmentMode.SetMsisdn -> HintConstants.AUTOFILL_HINT_PHONE_NUMBER
                         TextInputFormFragmentMode.ConfirmMsisdn -> HintConstants.AUTOFILL_HINT_SMS_OTP
                     }
             )
@@ -93,44 +89,44 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
 
     private fun setupTil() {
         views.loginGenericTextInputFormTextInput.textChanges()
-                .subscribe {
+                .onEach {
                     views.loginGenericTextInputFormTil.error = null
                 }
-                .disposeOnDestroyView()
+                .launchIn(viewLifecycleOwner.lifecycleScope)
     }
 
     private fun setupUi() {
         when (params.mode) {
-            TextInputFormFragmentMode.SetEmail      -> {
-                views.loginGenericTextInputFormTitle.text = getString(R.string.login_set_email_title)
-                views.loginGenericTextInputFormNotice.text = getString(R.string.login_set_email_notice)
+            TextInputFormFragmentMode.SetEmail -> {
+                views.loginGenericTextInputFormTitle.text = getString(CommonStrings.login_set_email_title)
+                views.loginGenericTextInputFormNotice.text = getString(CommonStrings.login_set_email_notice)
                 views.loginGenericTextInputFormNotice2.setTextOrHide(null)
                 views.loginGenericTextInputFormTil.hint =
-                        getString(if (params.mandatory) R.string.login_set_email_mandatory_hint else R.string.login_set_email_optional_hint)
+                        getString(if (params.mandatory) CommonStrings.login_set_email_mandatory_hint else CommonStrings.login_set_email_optional_hint)
                 views.loginGenericTextInputFormTextInput.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
                 views.loginGenericTextInputFormOtherButton.isVisible = false
-                views.loginGenericTextInputFormSubmit.text = getString(R.string.login_set_email_submit)
+                views.loginGenericTextInputFormSubmit.text = getString(CommonStrings.login_set_email_submit)
             }
-            TextInputFormFragmentMode.SetMsisdn     -> {
-                views.loginGenericTextInputFormTitle.text = getString(R.string.login_set_msisdn_title)
-                views.loginGenericTextInputFormNotice.text = getString(R.string.login_set_msisdn_notice)
-                views.loginGenericTextInputFormNotice2.setTextOrHide(getString(R.string.login_set_msisdn_notice2))
+            TextInputFormFragmentMode.SetMsisdn -> {
+                views.loginGenericTextInputFormTitle.text = getString(CommonStrings.login_set_msisdn_title)
+                views.loginGenericTextInputFormNotice.text = getString(CommonStrings.login_set_msisdn_notice)
+                views.loginGenericTextInputFormNotice2.setTextOrHide(getString(CommonStrings.login_set_msisdn_notice2))
                 views.loginGenericTextInputFormTil.hint =
-                        getString(if (params.mandatory) R.string.login_set_msisdn_mandatory_hint else R.string.login_set_msisdn_optional_hint)
+                        getString(if (params.mandatory) CommonStrings.login_set_msisdn_mandatory_hint else CommonStrings.login_set_msisdn_optional_hint)
                 views.loginGenericTextInputFormTextInput.inputType = InputType.TYPE_CLASS_PHONE
                 views.loginGenericTextInputFormOtherButton.isVisible = false
-                views.loginGenericTextInputFormSubmit.text = getString(R.string.login_set_msisdn_submit)
+                views.loginGenericTextInputFormSubmit.text = getString(CommonStrings.login_set_msisdn_submit)
             }
             TextInputFormFragmentMode.ConfirmMsisdn -> {
-                views.loginGenericTextInputFormTitle.text = getString(R.string.login_msisdn_confirm_title)
-                views.loginGenericTextInputFormNotice.text = getString(R.string.login_msisdn_confirm_notice, params.extra)
+                views.loginGenericTextInputFormTitle.text = getString(CommonStrings.login_msisdn_confirm_title)
+                views.loginGenericTextInputFormNotice.text = getString(CommonStrings.login_msisdn_confirm_notice, params.extra)
                 views.loginGenericTextInputFormNotice2.setTextOrHide(null)
                 views.loginGenericTextInputFormTil.hint =
-                        getString(R.string.login_msisdn_confirm_hint)
+                        getString(CommonStrings.login_msisdn_confirm_hint)
                 views.loginGenericTextInputFormTextInput.inputType = InputType.TYPE_CLASS_NUMBER
                 views.loginGenericTextInputFormOtherButton.isVisible = true
-                views.loginGenericTextInputFormOtherButton.text = getString(R.string.login_msisdn_confirm_send_again)
-                views.loginGenericTextInputFormSubmit.text = getString(R.string.login_msisdn_confirm_submit)
+                views.loginGenericTextInputFormOtherButton.text = getString(CommonStrings.login_msisdn_confirm_send_again)
+                views.loginGenericTextInputFormSubmit.text = getString(CommonStrings.login_msisdn_confirm_submit)
             }
         }
     }
@@ -140,7 +136,7 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
             TextInputFormFragmentMode.ConfirmMsisdn -> {
                 loginViewModel.handle(LoginAction.SendAgainThreePid)
             }
-            else                                    -> {
+            else -> {
                 // Should not happen, button is not displayed
             }
         }
@@ -155,10 +151,10 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
             loginViewModel.handle(LoginAction.RegisterDummy)
         } else {
             when (params.mode) {
-                TextInputFormFragmentMode.SetEmail      -> {
+                TextInputFormFragmentMode.SetEmail -> {
                     loginViewModel.handle(LoginAction.AddThreePid(RegisterThreePid.Email(text)))
                 }
-                TextInputFormFragmentMode.SetMsisdn     -> {
+                TextInputFormFragmentMode.SetMsisdn -> {
                     getCountryCodeOrShowError(text)?.let { countryCode ->
                         loginViewModel.handle(LoginAction.AddThreePid(RegisterThreePid.Msisdn(text, countryCode)))
                     }
@@ -176,16 +172,16 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
     }
 
     private fun getCountryCodeOrShowError(text: String): String? {
-        // We expect an international format for the moment (see https://github.com/vector-im/riotX-android/issues/693)
+        // We expect an international format for the moment (see https://github.com/element-hq/riotX-android/issues/693)
         if (text.startsWith("+")) {
             try {
                 val phoneNumber = PhoneNumberUtil.getInstance().parse(text, null)
                 return PhoneNumberUtil.getInstance().getRegionCodeForCountryCode(phoneNumber.countryCode)
             } catch (e: NumberParseException) {
-                views.loginGenericTextInputFormTil.error = getString(R.string.login_msisdn_error_other)
+                views.loginGenericTextInputFormTil.error = getString(CommonStrings.login_msisdn_error_other)
             }
         } else {
-            views.loginGenericTextInputFormTil.error = getString(R.string.login_msisdn_error_not_international)
+            views.loginGenericTextInputFormTil.error = getString(CommonStrings.login_msisdn_error_not_international)
         }
 
         // Error
@@ -195,10 +191,10 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
     private fun setupSubmitButton() {
         views.loginGenericTextInputFormSubmit.isEnabled = false
         views.loginGenericTextInputFormTextInput.textChanges()
-                .subscribe {
+                .onEach {
                     views.loginGenericTextInputFormSubmit.isEnabled = isInputValid(it)
                 }
-                .disposeOnDestroyView()
+                .launchIn(viewLifecycleOwner.lifecycleScope)
     }
 
     private fun isInputValid(input: CharSequence): Boolean {
@@ -206,10 +202,10 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
             true
         } else {
             when (params.mode) {
-                TextInputFormFragmentMode.SetEmail      -> {
+                TextInputFormFragmentMode.SetEmail -> {
                     input.isEmail()
                 }
-                TextInputFormFragmentMode.SetMsisdn     -> {
+                TextInputFormFragmentMode.SetMsisdn -> {
                     input.isNotBlank()
                 }
                 TextInputFormFragmentMode.ConfirmMsisdn -> {
@@ -221,7 +217,7 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
 
     override fun onError(throwable: Throwable) {
         when (params.mode) {
-            TextInputFormFragmentMode.SetEmail      -> {
+            TextInputFormFragmentMode.SetEmail -> {
                 if (throwable.is401()) {
                     // This is normal use case, we go to the mail waiting screen
                     loginViewModel.handle(LoginAction.PostViewEvent(LoginViewEvents.OnSendEmailSuccess(loginViewModel.currentThreePid ?: "")))
@@ -229,7 +225,7 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
                     views.loginGenericTextInputFormTil.error = errorFormatter.toHumanReadable(throwable)
                 }
             }
-            TextInputFormFragmentMode.SetMsisdn     -> {
+            TextInputFormFragmentMode.SetMsisdn -> {
                 if (throwable.is401()) {
                     // This is normal use case, we go to the enter code screen
                     loginViewModel.handle(LoginAction.PostViewEvent(LoginViewEvents.OnSendMsisdnSuccess(loginViewModel.currentThreePid ?: "")))
@@ -241,11 +237,11 @@ class LoginGenericTextInputFormFragment @Inject constructor() : AbstractLoginFra
                 when {
                     throwable is Failure.SuccessError ->
                         // The entered code is not correct
-                        views.loginGenericTextInputFormTil.error = getString(R.string.login_validation_code_is_not_correct)
-                    throwable.is401()                 ->
+                        views.loginGenericTextInputFormTil.error = getString(CommonStrings.login_validation_code_is_not_correct)
+                    throwable.is401() ->
                         // It can happen if user request again the 3pid
                         Unit
-                    else                              ->
+                    else ->
                         views.loginGenericTextInputFormTil.error = errorFormatter.toHumanReadable(throwable)
                 }
             }

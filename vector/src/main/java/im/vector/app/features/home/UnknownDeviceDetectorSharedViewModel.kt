@@ -1,54 +1,48 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home
 
-import com.airbnb.mvrx.ActivityViewModelContext
 import com.airbnb.mvrx.Async
-import com.airbnb.mvrx.FragmentViewModelContext
-import com.airbnb.mvrx.MvRxState
-import com.airbnb.mvrx.MvRxViewModelFactory
-import com.airbnb.mvrx.Success
+import com.airbnb.mvrx.MavericksState
+import com.airbnb.mvrx.MavericksViewModelFactory
 import com.airbnb.mvrx.Uninitialized
 import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
+import dagger.hilt.EntryPoints
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.SingletonEntryPoint
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.EmptyViewEvents
 import im.vector.app.core.platform.VectorViewModel
 import im.vector.app.core.platform.VectorViewModelAction
-import im.vector.app.features.settings.VectorPreferences
-import io.reactivex.Observable
-import org.matrix.android.sdk.api.NoOpMatrixCallback
-import org.matrix.android.sdk.api.extensions.orFalse
+import im.vector.app.core.session.clientinfo.DeleteUnusedClientInformationUseCase
+import im.vector.lib.core.utils.timer.Clock
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.launch
+import org.matrix.android.sdk.api.extensions.tryOrNull
 import org.matrix.android.sdk.api.session.Session
+import org.matrix.android.sdk.api.session.crypto.model.DeviceInfo
+import org.matrix.android.sdk.api.session.getUserOrDefault
 import org.matrix.android.sdk.api.util.MatrixItem
-import org.matrix.android.sdk.api.util.Optional
 import org.matrix.android.sdk.api.util.toMatrixItem
-import org.matrix.android.sdk.internal.crypto.model.CryptoDeviceInfo
-import org.matrix.android.sdk.internal.crypto.model.rest.DeviceInfo
-import org.matrix.android.sdk.internal.crypto.store.PrivateKeysInfo
-import org.matrix.android.sdk.rx.rx
+import org.matrix.android.sdk.flow.flow
 import timber.log.Timber
-import java.util.concurrent.TimeUnit
 
 data class UnknownDevicesState(
-        val myMatrixItem: MatrixItem.UserItem? = null,
+        val myMatrixItem: MatrixItem.UserItem,
         val unknownSessions: Async<List<DeviceDetectionInfo>> = Uninitialized
-) : MvRxState
+) : MavericksState
 
 data class DeviceDetectionInfo(
         val deviceInfo: DeviceInfo,
@@ -56,114 +50,124 @@ data class DeviceDetectionInfo(
         val currentSessionTrust: Boolean
 )
 
-class UnknownDeviceDetectorSharedViewModel @AssistedInject constructor(@Assisted initialState: UnknownDevicesState,
-                                                                       session: Session,
-                                                                       private val vectorPreferences: VectorPreferences)
-    : VectorViewModel<UnknownDevicesState, UnknownDeviceDetectorSharedViewModel.Action, EmptyViewEvents>(initialState) {
+class UnknownDeviceDetectorSharedViewModel @AssistedInject constructor(
+        @Assisted initialState: UnknownDevicesState,
+        session: Session,
+        clock: Clock,
+        private val shouldShowUnverifiedSessionsAlertUseCase: ShouldShowUnverifiedSessionsAlertUseCase,
+        private val setUnverifiedSessionsAlertShownUseCase: SetUnverifiedSessionsAlertShownUseCase,
+        private val isNewLoginAlertShownUseCase: IsNewLoginAlertShownUseCase,
+        private val setNewLoginAlertShownUseCase: SetNewLoginAlertShownUseCase,
+        private val deleteUnusedClientInformationUseCase: DeleteUnusedClientInformationUseCase,
+) : VectorViewModel<UnknownDevicesState, UnknownDeviceDetectorSharedViewModel.Action, EmptyViewEvents>(initialState) {
 
     sealed class Action : VectorViewModelAction {
         data class IgnoreDevice(val deviceIds: List<String>) : Action()
+        data class IgnoreNewLogin(val deviceIds: List<String>) : Action()
     }
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: UnknownDevicesState): UnknownDeviceDetectorSharedViewModel
+    interface Factory : MavericksAssistedViewModelFactory<UnknownDeviceDetectorSharedViewModel, UnknownDevicesState> {
+        override fun create(initialState: UnknownDevicesState): UnknownDeviceDetectorSharedViewModel
     }
 
-    companion object : MvRxViewModelFactory<UnknownDeviceDetectorSharedViewModel, UnknownDevicesState> {
+    companion object : MavericksViewModelFactory<UnknownDeviceDetectorSharedViewModel, UnknownDevicesState> by hiltMavericksViewModelFactory() {
+        override fun initialState(viewModelContext: ViewModelContext): UnknownDevicesState {
+            val session = EntryPoints.get(viewModelContext.app(), SingletonEntryPoint::class.java).activeSessionHolder().getActiveSession()
 
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: UnknownDevicesState): UnknownDeviceDetectorSharedViewModel? {
-            val factory = when (viewModelContext) {
-                is FragmentViewModelContext -> viewModelContext.fragment as? Factory
-                is ActivityViewModelContext -> viewModelContext.activity as? Factory
-            }
-            return factory?.create(state) ?: error("You should let your activity/fragment implements Factory interface")
+            return UnknownDevicesState(
+                    myMatrixItem = session.getUserOrDefault(session.myUserId).toMatrixItem()
+            )
         }
     }
 
-    private val ignoredDeviceList = ArrayList<String>()
-
     init {
 
-        val currentSessionTs = session.cryptoService().getCryptoDeviceInfo(session.myUserId)
-                .firstOrNull { it.deviceId == session.sessionParams.deviceId }
-                ?.firstTimeSeenLocalTs
-                ?: System.currentTimeMillis()
-        Timber.v("## Detector - Current Session first time seen $currentSessionTs")
+        combine(
+                session.flow().liveUserCryptoDevices(session.myUserId),
+                session.flow().liveMyDevicesInfo(),
+                session.flow().liveCrossSigningPrivateKeys(),
+        ) { cryptoList, infoList, pInfo ->
+            Timber.v("## Detector trigger ${cryptoList.map { "${it.deviceId} ${it.trustLevel}" }}")
+            Timber.v("## Detector trigger canCrossSign ${pInfo.get().selfSigned != null}")
 
-        ignoredDeviceList.addAll(
-                vectorPreferences.getUnknownDeviceDismissedList().also {
-                    Timber.v("## Detector - Remembered ignored list $it")
-                }
-        )
+            deleteUnusedClientInformation(infoList)
 
-        Observable.combineLatest<List<CryptoDeviceInfo>, List<DeviceInfo>, Optional<PrivateKeysInfo>, List<DeviceDetectionInfo>>(
-                session.rx().liveUserCryptoDevices(session.myUserId),
-                session.rx().liveMyDevicesInfo(),
-                session.rx().liveCrossSigningPrivateKeys(),
-                { cryptoList, infoList, pInfo ->
-                    //                    Timber.v("## Detector trigger ${cryptoList.map { "${it.deviceId} ${it.trustLevel}" }}")
-//                    Timber.v("## Detector trigger canCrossSign ${pInfo.get().selfSigned != null}")
-                    infoList
-                            .filter { info ->
-                                // filter verified session, by checking the crypto device info
-                                cryptoList.firstOrNull { info.deviceId == it.deviceId }?.isVerified?.not().orFalse()
-                            }
-                            // filter out ignored devices
-                            .filter { !ignoredDeviceList.contains(it.deviceId) }
-                            .sortedByDescending { it.lastSeenTs }
-                            .map { deviceInfo ->
-                                val deviceKnownSince = cryptoList.firstOrNull { it.deviceId == deviceInfo.deviceId }?.firstTimeSeenLocalTs ?: 0
-                                DeviceDetectionInfo(
-                                        deviceInfo,
-                                        deviceKnownSince > currentSessionTs + 60_000, // short window to avoid false positive,
-                                        pInfo.getOrNull()?.selfSigned != null // adding this to pass distinct when cross sign change
-                                )
-                            }
-                }
-        )
+            val currentSessionTs = session.cryptoService().getCryptoDeviceInfo(session.myUserId)
+                    .firstOrNull { it.deviceId == session.sessionParams.deviceId }
+                    ?.firstTimeSeenLocalTs
+                    ?: clock.epochMillis()
+            Timber.v("## Detector - Current Session first time seen $currentSessionTs")
+
+            infoList
+                    .asSequence()
+                    .filter {
+                        // filter out own device
+                        session.sessionParams.deviceId != it.deviceId
+                    }
+                    .filter { info ->
+                        val matchingDeviceWithKeys = cryptoList.firstOrNull { it.deviceId == info.deviceId }
+                        if (matchingDeviceWithKeys == null) {
+                            // filter out verified sessions or those which do not support encryption (i.e. without crypto info)
+                            false
+                        } else {
+                            // Only report unverified
+                            !matchingDeviceWithKeys.isVerified
+                        }
+                    }
+                    // filter out ignored devices
+                    .filter { shouldShowUnverifiedSessionsAlertUseCase.execute(it.deviceId) }
+                    .sortedByDescending { it.lastSeenTs }
+                    .map { deviceInfo ->
+                        val deviceKnownSince = cryptoList.firstOrNull { it.deviceId == deviceInfo.deviceId }?.firstTimeSeenLocalTs ?: 0
+                        val isNew = isNewLoginAlertShownUseCase.execute(deviceInfo.deviceId).not() && deviceKnownSince > currentSessionTs
+
+                        DeviceDetectionInfo(
+                                deviceInfo,
+                                isNew,
+                                pInfo.getOrNull()?.selfSigned != null // adding this to pass distinct when cross sign change
+                        )
+                    }
+                    .toList()
+        }
                 .distinctUntilChanged()
                 .execute { async ->
-                    //                    Timber.v("## Detector trigger passed distinct")
+                    Timber.v("## Detector trigger passed distinct ${async.invoke()}")
                     copy(
-                            myMatrixItem = session.getUser(session.myUserId)?.toMatrixItem(),
+                            myMatrixItem = session.getUserOrDefault(session.myUserId).toMatrixItem(),
                             unknownSessions = async
                     )
                 }
 
-        session.rx().liveUserCryptoDevices(session.myUserId)
+        session.flow().liveUserCryptoDevices(session.myUserId)
                 .distinctUntilChanged()
-                .throttleLast(5_000, TimeUnit.MILLISECONDS)
-                .subscribe {
+                .sample(5_000)
+                .onEach {
                     // If we have a new crypto device change, we might want to trigger refresh of device info
-                    session.cryptoService().fetchDevicesList(NoOpMatrixCallback())
+                    tryOrNull { session.cryptoService().fetchDevicesList() }
                 }
-                .disposeOnClear()
+                .launchIn(viewModelScope)
 
         // trigger a refresh of lastSeen / last Ip
-        session.cryptoService().fetchDevicesList(NoOpMatrixCallback())
+        viewModelScope.launch {
+            tryOrNull { session.cryptoService().fetchDevicesList() }
+        }
+    }
+
+    private fun deleteUnusedClientInformation(deviceFullInfoList: List<DeviceInfo>) {
+        viewModelScope.launch {
+            deleteUnusedClientInformationUseCase.execute(deviceFullInfoList)
+        }
     }
 
     override fun handle(action: Action) {
         when (action) {
             is Action.IgnoreDevice -> {
-                ignoredDeviceList.addAll(action.deviceIds)
-                // local echo
-                withState { state ->
-                    state.unknownSessions.invoke()?.let { detectedSessions ->
-                        val updated = detectedSessions.filter { !action.deviceIds.contains(it.deviceInfo.deviceId) }
-                        setState {
-                            copy(unknownSessions = Success(updated))
-                        }
-                    }
-                }
+                setUnverifiedSessionsAlertShownUseCase.execute(action.deviceIds)
+            }
+            is Action.IgnoreNewLogin -> {
+                setNewLoginAlertShownUseCase.execute(action.deviceIds)
             }
         }
-    }
-
-    override fun onCleared() {
-        vectorPreferences.storeUnknownDeviceDismissedList(ignoredDeviceList)
-        super.onCleared()
     }
 }

@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.contactsbook
@@ -20,33 +11,37 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.appcompat.app.AlertDialog
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import com.airbnb.mvrx.activityViewModel
 import com.airbnb.mvrx.withState
-import com.jakewharton.rxbinding3.widget.checkedChanges
-import com.jakewharton.rxbinding3.widget.textChanges
-import im.vector.app.R
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.extensions.cleanup
 import im.vector.app.core.extensions.configureWith
 import im.vector.app.core.extensions.hideKeyboard
 import im.vector.app.core.platform.VectorBaseFragment
+import im.vector.app.core.utils.showIdentityServerConsentDialog
 import im.vector.app.databinding.FragmentContactsBookBinding
 import im.vector.app.features.userdirectory.PendingSelection
 import im.vector.app.features.userdirectory.UserListAction
 import im.vector.app.features.userdirectory.UserListSharedAction
 import im.vector.app.features.userdirectory.UserListSharedActionViewModel
 import im.vector.app.features.userdirectory.UserListViewModel
-
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import org.matrix.android.sdk.api.session.identity.ThreePid
 import org.matrix.android.sdk.api.session.user.model.User
-import java.util.concurrent.TimeUnit
+import reactivecircus.flowbinding.android.widget.checkedChanges
+import reactivecircus.flowbinding.android.widget.textChanges
 import javax.inject.Inject
 
-class ContactsBookFragment @Inject constructor(
-        private val contactsBookViewModelFactory: ContactsBookViewModel.Factory,
-        private val contactsBookController: ContactsBookController
-) : VectorBaseFragment<FragmentContactsBookBinding>(), ContactsBookController.Callback, ContactsBookViewModel.Factory {
+@AndroidEntryPoint
+class ContactsBookFragment :
+        VectorBaseFragment<FragmentContactsBookBinding>(),
+        ContactsBookController.Callback {
+
+    @Inject lateinit var contactsBookController: ContactsBookController
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentContactsBookBinding {
         return FragmentContactsBookBinding.inflate(inflater, container, false)
@@ -59,10 +54,6 @@ class ContactsBookFragment @Inject constructor(
 
     private lateinit var sharedActionViewModel: UserListSharedActionViewModel
 
-    override fun create(initialState: ContactsBookViewState): ContactsBookViewModel {
-        return contactsBookViewModelFactory.create(initialState)
-    }
-
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         sharedActionViewModel = activityViewModelProvider.get(UserListSharedActionViewModel::class.java)
@@ -70,41 +61,46 @@ class ContactsBookFragment @Inject constructor(
         setupFilterView()
         setupConsentView()
         setupOnlyBoundContactsView()
-        setupCloseView()
-    }
-
-    private fun setupConsentView() {
-        views.phoneBookSearchForMatrixContacts.setOnClickListener {
-            withState(contactsBookViewModel) { state ->
-                AlertDialog.Builder(requireActivity())
-                        .setTitle(R.string.identity_server_consent_dialog_title)
-                        .setMessage(getString(R.string.identity_server_consent_dialog_content, state.identityServerUrl ?: ""))
-                        .setPositiveButton(R.string.yes) { _, _ ->
-                            contactsBookViewModel.handle(ContactsBookAction.UserConsentGranted)
-                        }
-                        .setNegativeButton(R.string.no, null)
-                        .show()
+        setupToolbar(views.phoneBookToolbar)
+                .allowBack(useCross = true)
+        contactsBookViewModel.observeViewEvents {
+            when (it) {
+                is ContactsBookViewEvents.Failure -> showFailure(it.throwable)
+                is ContactsBookViewEvents.OnPoliciesRetrieved -> showConsentDialog(it)
             }
         }
     }
 
+    private fun setupConsentView() {
+        views.phoneBookSearchForMatrixContacts.debouncedClicks {
+            contactsBookViewModel.handle(ContactsBookAction.UserConsentRequest)
+        }
+    }
+
+    private fun showConsentDialog(event: ContactsBookViewEvents.OnPoliciesRetrieved) {
+        requireContext().showIdentityServerConsentDialog(
+                event.identityServerWithTerms,
+                consentCallBack = { contactsBookViewModel.handle(ContactsBookAction.UserConsentGranted) }
+        )
+    }
+
     private fun setupOnlyBoundContactsView() {
         views.phoneBookOnlyBoundContacts.checkedChanges()
-                .subscribe {
+                .onEach {
                     contactsBookViewModel.handle(ContactsBookAction.OnlyBoundContacts(it))
                 }
-                .disposeOnDestroyView()
+                .launchIn(viewLifecycleOwner.lifecycleScope)
     }
 
     private fun setupFilterView() {
         views.phoneBookFilter
                 .textChanges()
                 .skipInitialValue()
-                .debounce(300, TimeUnit.MILLISECONDS)
-                .subscribe {
+                .debounce(300)
+                .onEach {
                     contactsBookViewModel.handle(ContactsBookAction.FilterWith(it.toString()))
                 }
-                .disposeOnDestroyView()
+                .launchIn(viewLifecycleOwner.lifecycleScope)
     }
 
     override fun onDestroyView() {
@@ -116,12 +112,6 @@ class ContactsBookFragment @Inject constructor(
     private fun setupRecyclerView() {
         contactsBookController.callback = this
         views.phoneBookRecyclerView.configureWith(contactsBookController)
-    }
-
-    private fun setupCloseView() {
-        views.phoneBookClose.debouncedClicks {
-            sharedActionViewModel.post(UserListSharedAction.GoBack)
-        }
     }
 
     override fun invalidate() = withState(contactsBookViewModel) { state ->

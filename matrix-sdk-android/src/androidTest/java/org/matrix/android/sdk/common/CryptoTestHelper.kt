@@ -16,44 +16,59 @@
 
 package org.matrix.android.sdk.common
 
-import android.os.SystemClock
 import android.util.Log
-import androidx.lifecycle.Observer
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import org.amshove.kluent.fail
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.matrix.android.sdk.api.auth.UIABaseAuth
 import org.matrix.android.sdk.api.auth.UserInteractiveAuthInterceptor
 import org.matrix.android.sdk.api.auth.UserPasswordAuth
 import org.matrix.android.sdk.api.auth.registration.RegistrationFlowResponse
+import org.matrix.android.sdk.api.crypto.MXCRYPTO_ALGORITHM_MEGOLM_BACKUP
+import org.matrix.android.sdk.api.extensions.orFalse
 import org.matrix.android.sdk.api.session.Session
-import org.matrix.android.sdk.api.session.crypto.verification.IncomingSasVerificationTransaction
-import org.matrix.android.sdk.api.session.crypto.verification.OutgoingSasVerificationTransaction
+import org.matrix.android.sdk.api.session.crypto.MXCryptoError
+import org.matrix.android.sdk.api.session.crypto.crosssigning.KEYBACKUP_SECRET_SSSS_NAME
+import org.matrix.android.sdk.api.session.crypto.crosssigning.MASTER_KEY_SSSS_NAME
+import org.matrix.android.sdk.api.session.crypto.crosssigning.SELF_SIGNING_KEY_SSSS_NAME
+import org.matrix.android.sdk.api.session.crypto.crosssigning.USER_SIGNING_KEY_SSSS_NAME
+import org.matrix.android.sdk.api.session.crypto.keysbackup.BackupUtils
+import org.matrix.android.sdk.api.session.crypto.keysbackup.MegolmBackupAuthData
+import org.matrix.android.sdk.api.session.crypto.keysbackup.MegolmBackupCreationInfo
+import org.matrix.android.sdk.api.session.crypto.model.OlmDecryptionResult
+import org.matrix.android.sdk.api.session.crypto.verification.EVerificationState
+import org.matrix.android.sdk.api.session.crypto.verification.PendingVerificationRequest
+import org.matrix.android.sdk.api.session.crypto.verification.SasTransactionState
+import org.matrix.android.sdk.api.session.crypto.verification.SasVerificationTransaction
 import org.matrix.android.sdk.api.session.crypto.verification.VerificationMethod
-import org.matrix.android.sdk.api.session.crypto.verification.VerificationTxState
-import org.matrix.android.sdk.api.session.events.model.Event
+import org.matrix.android.sdk.api.session.crypto.verification.dbgState
+import org.matrix.android.sdk.api.session.crypto.verification.getRequest
+import org.matrix.android.sdk.api.session.crypto.verification.getTransaction
 import org.matrix.android.sdk.api.session.events.model.EventType
-import org.matrix.android.sdk.api.session.events.model.toContent
-import org.matrix.android.sdk.api.session.room.Room
+import org.matrix.android.sdk.api.session.events.model.toModel
+import org.matrix.android.sdk.api.session.getRoom
+import org.matrix.android.sdk.api.session.getRoomSummary
+import org.matrix.android.sdk.api.session.room.failure.JoinRoomFailure
 import org.matrix.android.sdk.api.session.room.model.Membership
-import org.matrix.android.sdk.api.session.room.model.RoomSummary
+import org.matrix.android.sdk.api.session.room.model.RoomHistoryVisibility
 import org.matrix.android.sdk.api.session.room.model.create.CreateRoomParams
+import org.matrix.android.sdk.api.session.room.model.message.MessageContent
 import org.matrix.android.sdk.api.session.room.roomSummaryQueryParams
-import org.matrix.android.sdk.internal.crypto.MXCRYPTO_ALGORITHM_MEGOLM
-import org.matrix.android.sdk.internal.crypto.MXCRYPTO_ALGORITHM_MEGOLM_BACKUP
-import org.matrix.android.sdk.internal.crypto.keysbackup.model.MegolmBackupAuthData
-import org.matrix.android.sdk.internal.crypto.keysbackup.model.MegolmBackupCreationInfo
+import org.matrix.android.sdk.api.session.securestorage.EmptyKeySigner
+import org.matrix.android.sdk.api.session.securestorage.KeyRef
 import java.util.UUID
-import java.util.concurrent.CountDownLatch
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 
-class CryptoTestHelper(private val mTestHelper: CommonTestHelper) {
+class CryptoTestHelper(val testHelper: CommonTestHelper) {
 
     private val messagesFromAlice: List<String> = listOf("0 - Hello I'm Alice!", "4 - Go!")
     private val messagesFromBob: List<String> = listOf("1 - Hello I'm Bob!", "2 - Isn't life grand?", "3 - Let's go to the opera.")
@@ -63,81 +78,51 @@ class CryptoTestHelper(private val mTestHelper: CommonTestHelper) {
     /**
      * @return alice session
      */
-    fun doE2ETestWithAliceInARoom(encryptedRoom: Boolean = true): CryptoTestData {
-        val aliceSession = mTestHelper.createAccount(TestConstants.USER_ALICE, defaultSessionParams)
+    suspend fun doE2ETestWithAliceInARoom(encryptedRoom: Boolean = true, roomHistoryVisibility: RoomHistoryVisibility? = null): CryptoTestData {
+        val aliceSession = testHelper.createAccount(TestConstants.USER_ALICE, defaultSessionParams)
 
-        val roomId = mTestHelper.runBlockingTest {
-            aliceSession.createRoom(CreateRoomParams().apply { name = "MyRoom" })
-        }
-
+        val roomId = aliceSession.roomService().createRoom(CreateRoomParams().apply {
+            historyVisibility = roomHistoryVisibility
+            name = "MyRoom"
+        })
         if (encryptedRoom) {
             val room = aliceSession.getRoom(roomId)!!
-
-            mTestHelper.runBlockingTest {
-                room.enableEncryption()
-            }
+            waitFor(
+                    continueWhen = { room.onMain { getRoomSummaryLive() }.first { it.getOrNull()?.isEncrypted.orFalse() } },
+                    action = { room.roomCryptoService().enableEncryption() }
+            )
         }
-
         return CryptoTestData(roomId, listOf(aliceSession))
     }
 
     /**
      * @return alice and bob sessions
      */
-    fun doE2ETestWithAliceAndBobInARoom(encryptedRoom: Boolean = true): CryptoTestData {
-        val cryptoTestData = doE2ETestWithAliceInARoom(encryptedRoom)
+    suspend fun doE2ETestWithAliceAndBobInARoom(encryptedRoom: Boolean = true, roomHistoryVisibility: RoomHistoryVisibility? = null): CryptoTestData {
+        val cryptoTestData = doE2ETestWithAliceInARoom(encryptedRoom, roomHistoryVisibility)
         val aliceSession = cryptoTestData.firstSession
         val aliceRoomId = cryptoTestData.roomId
 
         val aliceRoom = aliceSession.getRoom(aliceRoomId)!!
 
-        val bobSession = mTestHelper.createAccount(TestConstants.USER_BOB, defaultSessionParams)
+        val bobSession = testHelper.createAccount(TestConstants.USER_BOB, defaultSessionParams)
 
-        val lock1 = CountDownLatch(1)
+        waitFor(
+                continueWhen = { bobSession.roomService().onMain { getRoomSummariesLive(roomSummaryQueryParams { }) }.first { it.isNotEmpty() } },
+                action = { aliceRoom.membershipService().invite(bobSession.myUserId) }
+        )
 
-        val bobRoomSummariesLive = runBlocking(Dispatchers.Main) {
-            bobSession.getRoomSummariesLive(roomSummaryQueryParams { })
-        }
-
-        val newRoomObserver = object : Observer<List<RoomSummary>> {
-            override fun onChanged(t: List<RoomSummary>?) {
-                if (t?.isNotEmpty() == true) {
-                    lock1.countDown()
-                    bobRoomSummariesLive.removeObserver(this)
-                }
-            }
-        }
-
-        GlobalScope.launch(Dispatchers.Main) {
-            bobRoomSummariesLive.observeForever(newRoomObserver)
-        }
-
-        mTestHelper.runBlockingTest {
-            aliceRoom.invite(bobSession.myUserId)
-        }
-
-        mTestHelper.await(lock1)
-
-        val lock = CountDownLatch(1)
-
-        val roomJoinedObserver = object : Observer<List<RoomSummary>> {
-            override fun onChanged(t: List<RoomSummary>?) {
-                if (bobSession.getRoom(aliceRoomId)
-                                ?.getRoomMember(aliceSession.myUserId)
-                                ?.membership == Membership.JOIN) {
-                    lock.countDown()
-                    bobRoomSummariesLive.removeObserver(this)
-                }
-            }
-        }
-
-        GlobalScope.launch(Dispatchers.Main) {
-            bobRoomSummariesLive.observeForever(roomJoinedObserver)
-        }
-
-        mTestHelper.runBlockingTest { bobSession.joinRoom(aliceRoomId) }
-
-        mTestHelper.await(lock)
+        waitFor(
+                continueWhen = {
+                    bobSession.roomService().onMain { getRoomSummariesLive(roomSummaryQueryParams { }) }.first {
+                        bobSession.getRoom(aliceRoomId)
+                                ?.membershipService()
+                                ?.getRoomMember(bobSession.myUserId)
+                                ?.membership == Membership.JOIN
+                    }
+                },
+                action = { bobSession.roomService().joinRoom(aliceRoomId) }
+        )
 
         // Ensure bob can send messages to the room
 //        val roomFromBobPOV = bobSession.getRoom(aliceRoomId)!!
@@ -147,100 +132,125 @@ class CryptoTestHelper(private val mTestHelper: CommonTestHelper) {
         return CryptoTestData(aliceRoomId, listOf(aliceSession, bobSession))
     }
 
-    /**
-     * @return Alice, Bob and Sam session
-     */
-    fun doE2ETestWithAliceAndBobAndSamInARoom(): CryptoTestData {
-        val cryptoTestData = doE2ETestWithAliceAndBobInARoom()
-        val aliceSession = cryptoTestData.firstSession
-        val aliceRoomId = cryptoTestData.roomId
+    suspend fun inviteNewUsersAndWaitForThemToJoin(session: Session, roomId: String, usernames: List<String>): List<Session> {
+        val newSessions = usernames.map { username ->
+            testHelper.createAccount(username, SessionTestParams(true)).also {
+                if (it.cryptoService().supportsDisablingKeyGossiping()) {
+                    it.cryptoService().enableKeyGossiping(false)
+                }
+            }
+        }
 
-        val room = aliceSession.getRoom(aliceRoomId)!!
+        val room = session.getRoom(roomId)!!
 
-        val samSession = createSamAccountAndInviteToTheRoom(room)
+        Log.v("#E2E TEST", "accounts for ${usernames.joinToString(",") { it.take(10) }} created")
+        // we want to invite them in the room
+        newSessions.forEach { newSession ->
+            Log.v("#E2E TEST", "${session.myUserId.take(10)} invites ${newSession.myUserId.take(10)}")
+            room.membershipService().invite(newSession.myUserId)
+        }
 
-        // wait the initial sync
-        SystemClock.sleep(1000)
-
-        return CryptoTestData(aliceRoomId, listOf(aliceSession, cryptoTestData.secondSession!!, samSession))
+        // All user should accept invite
+        newSessions.forEach { newSession ->
+            waitForAndAcceptInviteInRoom(newSession, roomId)
+            Log.v("#E2E TEST", "${newSession.myUserId.take(10)} joined room $roomId")
+        }
+        ensureMembersHaveJoined(session, newSessions, roomId)
+        return newSessions
     }
 
-    /**
-     * Create Sam account and invite him in the room. He will accept the invitation
-     * @Return Sam session
-     */
-    fun createSamAccountAndInviteToTheRoom(room: Room): Session {
-        val samSession = mTestHelper.createAccount(TestConstants.USER_SAM, defaultSessionParams)
+    private suspend fun ensureMembersHaveJoined(session: Session, invitedUserSessions: List<Session>, roomId: String) {
+        testHelper.retryWithBackoff(
+                onFail = {
+                    fail("Members ${invitedUserSessions.map { it.myUserId.take(10) }} should have join from the pov of ${session.myUserId.take(10)}")
+                }
+        ) {
+            invitedUserSessions.map { invitedUserSession ->
+                session.roomService().getRoomMember(invitedUserSession.myUserId, roomId)?.membership?.also {
+                    Log.v("#E2E TEST", "${invitedUserSession.myUserId.take(10)} membership is $it")
+                }
+            }.all {
+                it == Membership.JOIN
+            }
+        }
+    }
 
-        mTestHelper.runBlockingTest {
-            room.invite(samSession.myUserId, null)
+    private suspend fun waitForAndAcceptInviteInRoom(session: Session, roomId: String) {
+        testHelper.retryWithBackoff(
+                onFail = {
+                    fail("${session.myUserId} cannot see the invite from ${session.myUserId.take(10)}")
+                }
+        ) {
+            val roomSummary = session.getRoomSummary(roomId)
+            (roomSummary != null && roomSummary.membership == Membership.INVITE).also {
+                if (it) {
+                    Log.v("#E2E TEST", "${session.myUserId.take(10)} can see the invite from ${roomSummary?.inviterId}")
+                }
+            }
         }
 
-        mTestHelper.runBlockingTest {
-            samSession.joinRoom(room.roomId, null, emptyList())
+        // not sure why it's taking so long :/
+        Log.v("#E2E TEST", "${session.myUserId.take(10)} tries to join room $roomId")
+        try {
+            session.roomService().joinRoom(roomId)
+        } catch (ex: JoinRoomFailure.JoinedWithTimeout) {
+            // it's ok we will wait after
         }
 
-        return samSession
+        Log.v("#E2E TEST", "${session.myUserId} waiting for join echo ...")
+        testHelper.retryWithBackoff(
+                onFail = {
+                    fail("${session.myUserId.take(10)} cannot see the join echo for ${roomId}")
+                }
+        ) {
+            val roomSummary = session.getRoomSummary(roomId)
+            roomSummary != null && roomSummary.membership == Membership.JOIN
+        }
     }
 
     /**
      * @return Alice and Bob sessions
      */
-    fun doE2ETestWithAliceAndBobInARoomWithEncryptedMessages(): CryptoTestData {
+    suspend fun doE2ETestWithAliceAndBobInARoomWithEncryptedMessages(): CryptoTestData {
         val cryptoTestData = doE2ETestWithAliceAndBobInARoom()
         val aliceSession = cryptoTestData.firstSession
         val aliceRoomId = cryptoTestData.roomId
         val bobSession = cryptoTestData.secondSession!!
 
         bobSession.cryptoService().setWarnOnUnknownDevices(false)
-
         aliceSession.cryptoService().setWarnOnUnknownDevices(false)
 
         val roomFromBobPOV = bobSession.getRoom(aliceRoomId)!!
         val roomFromAlicePOV = aliceSession.getRoom(aliceRoomId)!!
 
         // Alice sends a message
-        mTestHelper.sendTextMessage(roomFromAlicePOV, messagesFromAlice[0], 1)
-//        roomFromAlicePOV.sendTextMessage(messagesFromAlice[0])
+        ensureEventReceived(aliceRoomId, testHelper.sendMessageInRoom(roomFromAlicePOV, messagesFromAlice[0]), bobSession, true)
 
         // Bob send 3 messages
-        mTestHelper.sendTextMessage(roomFromBobPOV, messagesFromBob[0], 1)
-        mTestHelper.sendTextMessage(roomFromBobPOV, messagesFromBob[1], 1)
-        mTestHelper.sendTextMessage(roomFromBobPOV, messagesFromBob[2], 1)
-        // Alice sends a message
-        mTestHelper.sendTextMessage(roomFromAlicePOV, messagesFromAlice[1], 1)
+        for (msg in messagesFromBob) {
+            ensureEventReceived(aliceRoomId, testHelper.sendMessageInRoom(roomFromBobPOV, msg), aliceSession, true)
+        }
 
+        // Alice sends a message
+        ensureEventReceived(aliceRoomId, testHelper.sendMessageInRoom(roomFromAlicePOV, messagesFromAlice[1]), bobSession, true)
         return cryptoTestData
     }
 
-    fun checkEncryptedEvent(event: Event, roomId: String, clearMessage: String, senderSession: Session) {
-        assertEquals(EventType.ENCRYPTED, event.type)
-        assertNotNull(event.content)
-
-        val eventWireContent = event.content.toContent()
-        assertNotNull(eventWireContent)
-
-        assertNull(eventWireContent["body"])
-        assertEquals(MXCRYPTO_ALGORITHM_MEGOLM, eventWireContent["algorithm"])
-
-        assertNotNull(eventWireContent["ciphertext"])
-        assertNotNull(eventWireContent["session_id"])
-        assertNotNull(eventWireContent["sender_key"])
-
-        assertEquals(senderSession.sessionParams.deviceId, eventWireContent["device_id"])
-
-        assertNotNull(event.eventId)
-        assertEquals(roomId, event.roomId)
-        assertEquals(EventType.MESSAGE, event.getClearType())
-        // TODO assertTrue(event.getAge() < 10000)
-
-        val eventContent = event.toContent()
-        assertNotNull(eventContent)
-        assertEquals(clearMessage, eventContent["body"])
-        assertEquals(senderSession.myUserId, event.senderId)
+    private suspend fun ensureEventReceived(roomId: String, eventId: String, session: Session, andCanDecrypt: Boolean) {
+        testHelper.retryWithBackoff {
+            val timeLineEvent = session.getRoom(roomId)?.timelineService()?.getTimelineEvent(eventId)
+            Log.d("#E2E", "ensureEventReceived $eventId => ${timeLineEvent?.senderInfo?.userId}| ${timeLineEvent?.root?.getClearType()}")
+            if (andCanDecrypt) {
+                timeLineEvent != null &&
+                        timeLineEvent.isEncrypted() &&
+                        timeLineEvent.root.getClearType() == EventType.MESSAGE
+            } else {
+                timeLineEvent != null
+            }
+        }
     }
 
-    fun createFakeMegolmBackupAuthData(): MegolmBackupAuthData {
+    private fun createFakeMegolmBackupAuthData(): MegolmBackupAuthData {
         return MegolmBackupAuthData(
                 publicKey = "abcdefg",
                 signatures = mapOf("something" to mapOf("ed25519:something" to "hijklmnop"))
@@ -251,63 +261,38 @@ class CryptoTestHelper(private val mTestHelper: CommonTestHelper) {
         return MegolmBackupCreationInfo(
                 algorithm = MXCRYPTO_ALGORITHM_MEGOLM_BACKUP,
                 authData = createFakeMegolmBackupAuthData(),
-                recoveryKey = "fake"
+                recoveryKey = BackupUtils.recoveryKeyFromPassphrase("3cnTdW")
         )
     }
 
-    fun createDM(alice: Session, bob: Session): String {
-        val roomId = mTestHelper.runBlockingTest {
-            alice.createDirectRoom(bob.myUserId)
-        }
+    suspend fun createDM(alice: Session, bob: Session): String {
+        var roomId = ""
+        waitFor(
+                continueWhen = {
+                    bob.roomService()
+                            .onMain { getRoomSummariesLive(roomSummaryQueryParams { }) }
+                            .first { it.any { it.roomId == roomId }.orFalse() }
+                },
+                action = { roomId = alice.roomService().createDirectRoom(bob.myUserId) }
+        )
 
-        mTestHelper.waitWithLatch { latch ->
-            val bobRoomSummariesLive = runBlocking(Dispatchers.Main) {
-                bob.getRoomSummariesLive(roomSummaryQueryParams { })
-            }
-
-            val newRoomObserver = object : Observer<List<RoomSummary>> {
-                override fun onChanged(t: List<RoomSummary>?) {
-                    val indexOfFirst = t?.indexOfFirst { it.roomId == roomId } ?: -1
-                    if (indexOfFirst != -1) {
-                        latch.countDown()
-                        bobRoomSummariesLive.removeObserver(this)
-                    }
-                }
-            }
-
-            GlobalScope.launch(Dispatchers.Main) {
-                bobRoomSummariesLive.observeForever(newRoomObserver)
-            }
-        }
-
-        mTestHelper.waitWithLatch { latch ->
-            val bobRoomSummariesLive = runBlocking(Dispatchers.Main) {
-                bob.getRoomSummariesLive(roomSummaryQueryParams { })
-            }
-
-            val newRoomObserver = object : Observer<List<RoomSummary>> {
-                override fun onChanged(t: List<RoomSummary>?) {
-                    if (bob.getRoom(roomId)
-                                    ?.getRoomMember(bob.myUserId)
-                                    ?.membership == Membership.JOIN) {
-                        latch.countDown()
-                        bobRoomSummariesLive.removeObserver(this)
-                    }
-                }
-            }
-
-            GlobalScope.launch(Dispatchers.Main) {
-                bobRoomSummariesLive.observeForever(newRoomObserver)
-            }
-
-            mTestHelper.runBlockingTest { bob.joinRoom(roomId) }
-        }
-
+        waitFor(
+                continueWhen = {
+                    bob.roomService()
+                            .onMain { getRoomSummariesLive(roomSummaryQueryParams { }) }
+                            .first {
+                                bob.getRoom(roomId)
+                                        ?.membershipService()
+                                        ?.getRoomMember(bob.myUserId)
+                                        ?.membership == Membership.JOIN
+                            }
+                },
+                action = { bob.roomService().joinRoom(roomId) }
+        )
         return roomId
     }
 
-    fun initializeCrossSigning(session: Session) {
-        mTestHelper.doSync<Unit> {
+    suspend fun initializeCrossSigning(session: Session) {
             session.cryptoService().crossSigningService()
                     .initializeCrossSigning(
                             object : UserInteractiveAuthInterceptor {
@@ -320,103 +305,377 @@ class CryptoTestHelper(private val mTestHelper: CommonTestHelper) {
                                             )
                                     )
                                 }
-                            }, it)
+                            })
+    }
+
+    /**
+     * Initialize cross-signing, set up megolm backup and save all in 4S
+     */
+    suspend fun bootstrapSecurity(session: Session) {
+        initializeCrossSigning(session)
+        val ssssService = session.sharedSecretStorageService()
+        val keyInfo = ssssService.generateKey(
+                UUID.randomUUID().toString(),
+                null,
+                "ssss_key",
+                EmptyKeySigner()
+        )
+        ssssService.setDefaultKey(keyInfo.keyId)
+
+        ssssService.storeSecret(
+                MASTER_KEY_SSSS_NAME,
+                session.cryptoService().crossSigningService().getCrossSigningPrivateKeys()!!.master!!,
+                listOf(KeyRef(keyInfo.keyId, keyInfo.keySpec))
+        )
+
+        ssssService.storeSecret(
+                SELF_SIGNING_KEY_SSSS_NAME,
+                session.cryptoService().crossSigningService().getCrossSigningPrivateKeys()!!.selfSigned!!,
+                listOf(KeyRef(keyInfo.keyId, keyInfo.keySpec))
+        )
+
+        ssssService.storeSecret(
+                USER_SIGNING_KEY_SSSS_NAME,
+                session.cryptoService().crossSigningService().getCrossSigningPrivateKeys()!!.user!!,
+                listOf(KeyRef(keyInfo.keyId, keyInfo.keySpec))
+        )
+
+        // set up megolm backup
+        val creationInfo = session.cryptoService().keysBackupService().prepareKeysBackupVersion(null, null)
+        val version = session.cryptoService().keysBackupService().createKeysBackupVersion(creationInfo)
+
+        // Save it for gossiping
+        session.cryptoService().keysBackupService().saveBackupRecoveryKey(creationInfo.recoveryKey, version = version.version)
+
+        creationInfo.recoveryKey.toBase64().let { secret ->
+            ssssService.storeSecret(
+                    KEYBACKUP_SECRET_SSSS_NAME,
+                    secret,
+                    listOf(KeyRef(keyInfo.keyId, keyInfo.keySpec))
+            )
         }
     }
 
-    fun verifySASCrossSign(alice: Session, bob: Session, roomId: String) {
+    suspend fun verifySASCrossSign(alice: Session, bob: Session, roomId: String) {
+        val scope = CoroutineScope(SupervisorJob())
+
         assertTrue(alice.cryptoService().crossSigningService().canCrossSign())
         assertTrue(bob.cryptoService().crossSigningService().canCrossSign())
 
-        val requestID = UUID.randomUUID().toString()
         val aliceVerificationService = alice.cryptoService().verificationService()
         val bobVerificationService = bob.cryptoService().verificationService()
 
-        aliceVerificationService.beginKeyVerificationInDMs(
+        val bobSeesVerification = CompletableDeferred<PendingVerificationRequest>()
+        scope.launch(Dispatchers.IO) {
+            bobVerificationService.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val request = it.getRequest()
+                        if (request != null) {
+                            bobSeesVerification.complete(request)
+                            return@collect cancel()
+                        }
+                    }
+        }
+
+        val aliceReady = CompletableDeferred<PendingVerificationRequest>()
+        scope.launch(Dispatchers.IO) {
+            aliceVerificationService.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val request = it.getRequest()
+                        if (request?.state == EVerificationState.Ready) {
+                            aliceReady.complete(request)
+                            return@collect cancel()
+                        }
+                    }
+        }
+        val bobReady = CompletableDeferred<PendingVerificationRequest>()
+        scope.launch(Dispatchers.IO) {
+            bobVerificationService.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val request = it.getRequest()
+                        if (request?.state == EVerificationState.Ready) {
+                            bobReady.complete(request)
+                            return@collect cancel()
+                        }
+                    }
+        }
+
+        val requestID = aliceVerificationService.requestKeyVerificationInDMs(
+                methods = listOf(VerificationMethod.SAS, VerificationMethod.QR_CODE_SCAN, VerificationMethod.QR_CODE_SHOW),
+                otherUserId = bob.myUserId,
+                roomId = roomId
+        ).transactionId
+
+        bobSeesVerification.await()
+        bobVerificationService.readyPendingVerification(
+                listOf(VerificationMethod.SAS),
+                alice.myUserId,
+                requestID
+        )
+        aliceReady.await()
+        bobReady.await()
+
+        val bobCode = CompletableDeferred<SasVerificationTransaction>()
+
+        scope.launch(Dispatchers.IO) {
+            bobVerificationService.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val transaction = it.getTransaction()
+                        Log.v("#E2E TEST", "#TEST flow ${bob.myUserId.take(5)} ${transaction?.transactionId}|${transaction?.dbgState()}")
+                        val tx = transaction as? SasVerificationTransaction
+                        if (tx?.state() == SasTransactionState.SasShortCodeReady) {
+                            Log.v("#E2E TEST", "COMPLETE BOB CODE")
+                            bobCode.complete(tx)
+                            return@collect cancel()
+                        }
+                        if (it.getRequest()?.state == EVerificationState.Cancelled) {
+                            Log.v("#E2E TEST", "EXCEPTION BOB CODE")
+                            bobCode.completeExceptionally(AssertionError("Request as been cancelled"))
+                            return@collect cancel()
+                        }
+                    }
+        }
+
+        val aliceCode = CompletableDeferred<SasVerificationTransaction>()
+
+        scope.launch(Dispatchers.IO) {
+            aliceVerificationService.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val transaction = it.getTransaction()
+                        Log.v("#E2E TEST", "#TEST flow ${alice.myUserId.take(5)}  ${transaction?.transactionId}|${transaction?.dbgState()}")
+                        val tx = transaction as? SasVerificationTransaction
+                        if (tx?.state() == SasTransactionState.SasShortCodeReady) {
+                            Log.v("#E2E TEST", "COMPLETE ALICE CODE")
+                            aliceCode.complete(tx)
+                            return@collect cancel()
+                        }
+                        if (it.getRequest()?.state == EVerificationState.Cancelled) {
+                            Log.v("#E2E TEST", "EXCEPTION ALICE CODE")
+                            aliceCode.completeExceptionally(AssertionError("Request as been cancelled"))
+                            return@collect cancel()
+                        }
+                    }
+        }
+
+        Log.v("#E2E TEST", "#TEST let alice start the verification")
+        val id = aliceVerificationService.startKeyVerification(
                 VerificationMethod.SAS,
-                requestID,
-                roomId,
                 bob.myUserId,
-                bob.sessionParams.credentials.deviceId!!)
+                requestID,
+        )
+        Log.v("#E2E TEST", "#TEST alice started: $id")
 
-        // we should reach SHOW SAS on both
-        var alicePovTx: OutgoingSasVerificationTransaction? = null
-        var bobPovTx: IncomingSasVerificationTransaction? = null
+        val bobTx = bobCode.await()
+        val aliceTx = aliceCode.await()
+        Log.v("#E2E TEST", "#TEST Alice code ${aliceTx.getDecimalCodeRepresentation()}")
+        Log.v("#E2E TEST", "#TEST Bob code ${bobTx.getDecimalCodeRepresentation()}")
+        assertEquals("SAS code do not match", aliceTx.getDecimalCodeRepresentation()!!, bobTx.getDecimalCodeRepresentation())
 
-        // wait for alice to get the ready
-        mTestHelper.waitWithLatch {
-            mTestHelper.retryPeriodicallyWithLatch(it) {
-                bobPovTx = bobVerificationService.getExistingTransaction(alice.myUserId, requestID) as? IncomingSasVerificationTransaction
-                Log.v("TEST", "== bobPovTx is ${alicePovTx?.uxState}")
-                if (bobPovTx?.state == VerificationTxState.OnStarted) {
-                    bobPovTx?.performAccept()
-                    true
-                } else {
-                    false
-                }
-            }
+        val aliceDone = CompletableDeferred<Unit>()
+        scope.launch(Dispatchers.IO) {
+            aliceVerificationService.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val transaction = it.getTransaction()
+                        Log.v("#E2E TEST", "#TEST flow ${alice.myUserId.take(5)}  ${transaction?.transactionId}|${transaction?.dbgState()}")
+
+                        val request = it.getRequest()
+                        Log.v("#E2E TEST", "#TEST flow request ${alice.myUserId.take(5)}  ${request?.transactionId}|${request?.state}")
+                        if (request?.state == EVerificationState.Done || request?.state == EVerificationState.WaitingForDone) {
+                            aliceDone.complete(Unit)
+                            return@collect cancel()
+                        }
+                    }
+        }
+        val bobDone = CompletableDeferred<Unit>()
+        scope.launch(Dispatchers.IO) {
+            bobVerificationService.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val transaction = it.getTransaction()
+                        Log.v("#E2E TEST", "#TEST flow ${bob.myUserId.take(5)}  ${transaction?.transactionId}|${transaction?.dbgState()}")
+
+                        val request = it.getRequest()
+                        Log.v("#E2E TEST", "#TEST flow request ${bob.myUserId.take(5)}  ${request?.transactionId}|${request?.state}")
+
+                        if (request?.state == EVerificationState.Done || request?.state == EVerificationState.WaitingForDone) {
+                            bobDone.complete(Unit)
+                            return@collect cancel()
+                        }
+                    }
         }
 
-        mTestHelper.waitWithLatch {
-            mTestHelper.retryPeriodicallyWithLatch(it) {
-                alicePovTx = aliceVerificationService.getExistingTransaction(bob.myUserId, requestID) as? OutgoingSasVerificationTransaction
-                Log.v("TEST", "== alicePovTx is ${alicePovTx?.uxState}")
-                alicePovTx?.state == VerificationTxState.ShortCodeReady
-            }
-        }
-        // wait for alice to get the ready
-        mTestHelper.waitWithLatch {
-            mTestHelper.retryPeriodicallyWithLatch(it) {
-                bobPovTx = bobVerificationService.getExistingTransaction(alice.myUserId, requestID) as? IncomingSasVerificationTransaction
-                Log.v("TEST", "== bobPovTx is ${alicePovTx?.uxState}")
-                if (bobPovTx?.state == VerificationTxState.OnStarted) {
-                    bobPovTx?.performAccept()
-                }
-                bobPovTx?.state == VerificationTxState.ShortCodeReady
-            }
-        }
+        Log.v("#E2E TEST", "#TEST Bob confirm sas code")
+        bobTx.userHasVerifiedShortCode()
+        Log.v("#E2E TEST", "#TEST Alice confirm sas code")
+        aliceTx.userHasVerifiedShortCode()
 
-        assertEquals("SAS code do not match", alicePovTx!!.getDecimalCodeRepresentation(), bobPovTx!!.getDecimalCodeRepresentation())
+        Log.v("#E2E TEST", "#TEST Waiting for Done..")
+        bobDone.await()
+        aliceDone.await()
+        Log.v("#E2E TEST", "#TEST .. ok")
 
-        bobPovTx!!.userHasVerifiedShortCode()
-        alicePovTx!!.userHasVerifiedShortCode()
+        alice.cryptoService().crossSigningService().isUserTrusted(bob.myUserId)
+        bob.cryptoService().crossSigningService().isUserTrusted(alice.myUserId)
 
-        mTestHelper.waitWithLatch {
-            mTestHelper.retryPeriodicallyWithLatch(it) {
-                alice.cryptoService().crossSigningService().isUserTrusted(bob.myUserId)
-            }
-        }
-
-        mTestHelper.waitWithLatch {
-            mTestHelper.retryPeriodicallyWithLatch(it) {
-                alice.cryptoService().crossSigningService().isUserTrusted(bob.myUserId)
-            }
-        }
+        scope.cancel()
     }
 
-    fun doE2ETestWithManyMembers(numberOfMembers: Int): CryptoTestData {
-        val aliceSession = mTestHelper.createAccount(TestConstants.USER_ALICE, defaultSessionParams)
+    suspend fun verifyNewSession(oldDevice: Session, newDevice: Session) {
+        val scope = CoroutineScope(SupervisorJob())
+
+        assertTrue(oldDevice.cryptoService().crossSigningService().canCrossSign())
+
+        val verificationServiceOld = oldDevice.cryptoService().verificationService()
+        val verificationServiceNew = newDevice.cryptoService().verificationService()
+
+        val oldSeesVerification = CompletableDeferred<PendingVerificationRequest>()
+        scope.launch(Dispatchers.IO) {
+            verificationServiceOld.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val request = it.getRequest()
+                        Log.d("#E2E", "Verification request received: $request")
+                        if (request != null) {
+                            oldSeesVerification.complete(request)
+                            return@collect cancel()
+                        }
+                    }
+        }
+
+        val newReady = CompletableDeferred<PendingVerificationRequest>()
+        scope.launch(Dispatchers.IO) {
+            verificationServiceNew.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val request = it.getRequest()
+                        Log.d("#E2E", "new state: ${request?.state}")
+                        if (request?.state == EVerificationState.Ready) {
+                            newReady.complete(request)
+                            return@collect cancel()
+                        }
+                    }
+        }
+
+        val txId = verificationServiceNew.requestSelfKeyVerification(listOf(VerificationMethod.SAS)).transactionId
+        oldSeesVerification.await()
+
+        verificationServiceOld.readyPendingVerification(
+                listOf(VerificationMethod.SAS),
+                oldDevice.myUserId,
+                txId
+        )
+
+        newReady.await()
+
+        val newConfirmed = CompletableDeferred<Unit>()
+        scope.launch(Dispatchers.IO) {
+            verificationServiceNew.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val tx = it.getTransaction() as? SasVerificationTransaction
+                        Log.d("#E2E", "new tx state: ${tx?.state()}")
+                        if (tx?.state() == SasTransactionState.SasShortCodeReady) {
+                            tx.userHasVerifiedShortCode()
+                            newConfirmed.complete(Unit)
+                            return@collect cancel()
+                        }
+                    }
+        }
+
+        val oldConfirmed = CompletableDeferred<Unit>()
+        scope.launch(Dispatchers.IO) {
+            verificationServiceOld.requestEventFlow()
+                    .cancellable()
+                    .collect {
+                        val tx = it.getTransaction() as? SasVerificationTransaction
+                        Log.d("#E2E", "old tx state: ${tx?.state()}")
+                        if (tx?.state() == SasTransactionState.SasShortCodeReady) {
+                            tx.userHasVerifiedShortCode()
+                            oldConfirmed.complete(Unit)
+                            return@collect cancel()
+                        }
+                    }
+        }
+
+        verificationServiceNew.startKeyVerification(VerificationMethod.SAS, newDevice.myUserId, txId)
+
+        newConfirmed.await()
+        oldConfirmed.await()
+
+        testHelper.retryPeriodically {
+            oldDevice.cryptoService().crossSigningService().isCrossSigningVerified()
+        }
+
+        Log.d("#E2E", "New session is trusted")
+    }
+
+    suspend fun doE2ETestWithManyMembers(numberOfMembers: Int): CryptoTestData {
+        val aliceSession = testHelper.createAccount(TestConstants.USER_ALICE, defaultSessionParams)
         aliceSession.cryptoService().setWarnOnUnknownDevices(false)
 
-        val roomId = mTestHelper.runBlockingTest {
-            aliceSession.createRoom(CreateRoomParams().apply { name = "MyRoom" })
-        }
+        val roomId = aliceSession.roomService().createRoom(CreateRoomParams().apply { name = "MyRoom" })
         val room = aliceSession.getRoom(roomId)!!
 
-        mTestHelper.runBlockingTest {
-            room.enableEncryption()
-        }
+        room.roomCryptoService().enableEncryption()
 
         val sessions = mutableListOf(aliceSession)
         for (index in 1 until numberOfMembers) {
-            val session = mTestHelper.createAccount("User_$index", defaultSessionParams)
-            mTestHelper.runBlockingTest(timeout = 600_000) { room.invite(session.myUserId, null) }
+            val session = testHelper.createAccount("User_$index", defaultSessionParams)
+            room.membershipService().invite(session.myUserId, null)
             println("TEST -> " + session.myUserId + " invited")
-            mTestHelper.runBlockingTest { session.joinRoom(room.roomId, null, emptyList()) }
+            session.roomService().joinRoom(room.roomId, null, emptyList())
             println("TEST -> " + session.myUserId + " joined")
             sessions.add(session)
         }
 
         return CryptoTestData(roomId, sessions)
+    }
+
+    suspend fun ensureCanDecrypt(sentEventIds: List<String>, session: Session, e2eRoomID: String, messagesText: List<String>) {
+        sentEventIds.forEachIndexed { index, sentEventId ->
+            testHelper.retryWithBackoff {
+                val event = session.getRoom(e2eRoomID)?.timelineService()?.getTimelineEvent(sentEventId)?.root
+                        ?: return@retryWithBackoff false
+                try {
+                    session.cryptoService().decryptEvent(event, "").let { result ->
+                        event.mxDecryptionResult = OlmDecryptionResult(
+                                payload = result.clearEvent,
+                                senderKey = result.senderCurve25519Key,
+                                keysClaimed = result.claimedEd25519Key?.let { mapOf("ed25519" to it) },
+                                forwardingCurve25519KeyChain = result.forwardingCurve25519KeyChain,
+                                verificationState = result.messageVerificationState
+                        )
+                    }
+                } catch (error: MXCryptoError) {
+                    // nop
+                }
+                Log.v("#E2E TEST", "ensureCanDecrypt ${event.getClearType()} is ${event.getClearContent()}")
+                event.getClearType() == EventType.MESSAGE &&
+                        messagesText[index] == event.getClearContent()?.toModel<MessageContent>()?.body
+            }
+        }
+    }
+
+    suspend fun ensureCannotDecrypt(sentEventIds: List<String>, session: Session, e2eRoomID: String, expectedError: MXCryptoError.ErrorType? = null) {
+        sentEventIds.forEach { sentEventId ->
+            val event = session.getRoom(e2eRoomID)!!.timelineService().getTimelineEvent(sentEventId)!!.root
+            try {
+                session.cryptoService().decryptEvent(event, "")
+                fail("Should not be able to decrypt event")
+            } catch (error: MXCryptoError) {
+                val errorType = (error as? MXCryptoError.Base)?.errorType
+                if (expectedError == null) {
+                    assertNotNull(errorType)
+                } else {
+                    assertEquals("Unexpected reason", expectedError, errorType)
+                }
+            }
+        }
     }
 }

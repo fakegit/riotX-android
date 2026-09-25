@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.crypto.keysbackup.settings
 
@@ -19,22 +10,24 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.appcompat.app.AlertDialog
 import com.airbnb.mvrx.activityViewModel
 import com.airbnb.mvrx.withState
-import im.vector.app.R
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.extensions.cleanup
 import im.vector.app.core.extensions.configureWith
 import im.vector.app.core.platform.VectorBaseFragment
 import im.vector.app.databinding.FragmentKeysBackupSettingsBinding
 import im.vector.app.features.crypto.keysbackup.restore.KeysBackupRestoreActivity
-import im.vector.app.features.crypto.keysbackup.setup.KeysBackupSetupActivity
-
+import im.vector.lib.strings.CommonStrings
 import javax.inject.Inject
 
-class KeysBackupSettingsFragment @Inject constructor(private val keysBackupSettingsRecyclerViewController: KeysBackupSettingsRecyclerViewController)
-    : VectorBaseFragment<FragmentKeysBackupSettingsBinding>(),
+@AndroidEntryPoint
+class KeysBackupSettingsFragment :
+        VectorBaseFragment<FragmentKeysBackupSettingsBinding>(),
         KeysBackupSettingsRecyclerViewController.Listener {
+
+    @Inject lateinit var keysBackupSettingsRecyclerViewController: KeysBackupSettingsRecyclerViewController
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentKeysBackupSettingsBinding {
         return FragmentKeysBackupSettingsBinding.inflate(inflater, container, false)
@@ -59,9 +52,7 @@ class KeysBackupSettingsFragment @Inject constructor(private val keysBackupSetti
     }
 
     override fun didSelectSetupMessageRecovery() {
-        context?.let {
-            startActivity(KeysBackupSetupActivity.intent(it, false))
-        }
+        viewModel.handle(KeyBackupSettingsAction.SetUpKeyBackup)
     }
 
     override fun didSelectRestoreMessageRecovery() {
@@ -72,14 +63,14 @@ class KeysBackupSettingsFragment @Inject constructor(private val keysBackupSetti
 
     override fun didSelectDeleteSetupMessageRecovery() {
         activity?.let {
-            AlertDialog.Builder(it)
-                    .setTitle(R.string.keys_backup_settings_delete_confirm_title)
-                    .setMessage(R.string.keys_backup_settings_delete_confirm_message)
+            MaterialAlertDialogBuilder(it)
+                    .setTitle(CommonStrings.keys_backup_settings_delete_confirm_title)
+                    .setMessage(CommonStrings.keys_backup_settings_delete_confirm_message)
                     .setCancelable(false)
-                    .setPositiveButton(R.string.keys_backup_settings_delete_confirm_title) { _, _ ->
+                    .setPositiveButton(CommonStrings.keys_backup_settings_delete_confirm_title) { _, _ ->
                         viewModel.handle(KeyBackupSettingsAction.DeleteKeyBackup)
                     }
-                    .setNegativeButton(R.string.cancel, null)
+                    .setNegativeButton(CommonStrings.action_cancel, null)
                     .setCancelable(true)
                     .show()
         }

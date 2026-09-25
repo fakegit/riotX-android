@@ -1,98 +1,80 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roomprofile.banned
 
-import androidx.lifecycle.viewModelScope
-import com.airbnb.mvrx.FragmentViewModelContext
-import com.airbnb.mvrx.MvRxViewModelFactory
-import com.airbnb.mvrx.ViewModelContext
+import com.airbnb.mvrx.MavericksViewModelFactory
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
-import im.vector.app.R
-import im.vector.app.core.extensions.exhaustive
+import dagger.assisted.AssistedInject
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.VectorViewModel
 import im.vector.app.core.resources.StringProvider
-import im.vector.app.features.powerlevel.PowerLevelsObservableFactory
+import im.vector.lib.strings.CommonStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.query.QueryStringValue
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.events.model.EventType
 import org.matrix.android.sdk.api.session.events.model.toModel
+import org.matrix.android.sdk.api.session.getRoom
+import org.matrix.android.sdk.api.session.room.getStateEvent
 import org.matrix.android.sdk.api.session.room.members.roomMemberQueryParams
 import org.matrix.android.sdk.api.session.room.model.Membership
 import org.matrix.android.sdk.api.session.room.model.RoomMemberContent
 import org.matrix.android.sdk.api.session.room.model.RoomMemberSummary
-import org.matrix.android.sdk.api.session.room.powerlevels.PowerLevelsHelper
-import org.matrix.android.sdk.rx.rx
-import org.matrix.android.sdk.rx.unwrap
+import org.matrix.android.sdk.flow.flow
+import org.matrix.android.sdk.flow.unwrap
 
-class RoomBannedMemberListViewModel @AssistedInject constructor(@Assisted initialState: RoomBannedMemberListViewState,
-                                                                private val stringProvider: StringProvider,
-                                                                private val session: Session)
-    : VectorViewModel<RoomBannedMemberListViewState, RoomBannedMemberListAction, RoomBannedMemberListViewEvents>(initialState) {
+class RoomBannedMemberListViewModel @AssistedInject constructor(
+        @Assisted initialState: RoomBannedMemberListViewState,
+        private val stringProvider: StringProvider,
+        private val session: Session
+) :
+        VectorViewModel<RoomBannedMemberListViewState, RoomBannedMemberListAction, RoomBannedMemberListViewEvents>(initialState) {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: RoomBannedMemberListViewState): RoomBannedMemberListViewModel
+    interface Factory : MavericksAssistedViewModelFactory<RoomBannedMemberListViewModel, RoomBannedMemberListViewState> {
+        override fun create(initialState: RoomBannedMemberListViewState): RoomBannedMemberListViewModel
     }
 
     private val room = session.getRoom(initialState.roomId)!!
 
     init {
-        val rxRoom = room.rx()
 
-        room.rx().liveRoomSummary()
+        room.flow().liveRoomSummary()
                 .unwrap()
                 .execute { async ->
                     copy(roomSummary = async)
                 }
 
-        rxRoom.liveRoomMembers(roomMemberQueryParams { memberships = listOf(Membership.BAN) })
+        room.flow().liveRoomMembers(roomMemberQueryParams { memberships = listOf(Membership.BAN) })
                 .execute {
                     copy(
                             bannedMemberSummaries = it
                     )
                 }
 
-        val powerLevelsContentLive = PowerLevelsObservableFactory(room).createObservable()
-
-        powerLevelsContentLive.subscribe {
-            val powerLevelsHelper = PowerLevelsHelper(it)
-            setState { copy(canUserBan = powerLevelsHelper.isUserAbleToBan(session.myUserId)) }
-        }.disposeOnClear()
+        val powerLevelsFlow = room.flow().liveRoomPowerLevels()
+        powerLevelsFlow
+                .setOnEach { roomPowerLevels ->
+                    copy(canUserBan = roomPowerLevels.isUserAbleToBan(session.myUserId))
+                }
     }
 
-    companion object : MvRxViewModelFactory<RoomBannedMemberListViewModel, RoomBannedMemberListViewState> {
-
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: RoomBannedMemberListViewState): RoomBannedMemberListViewModel? {
-            val fragment: RoomBannedMemberListFragment = (viewModelContext as FragmentViewModelContext).fragment()
-            return fragment.viewModelFactory.create(state)
-        }
-    }
+    companion object : MavericksViewModelFactory<RoomBannedMemberListViewModel, RoomBannedMemberListViewState> by hiltMavericksViewModelFactory()
 
     override fun handle(action: RoomBannedMemberListAction) {
         when (action) {
             is RoomBannedMemberListAction.QueryInfo -> onQueryBanInfo(action.roomMemberSummary)
             is RoomBannedMemberListAction.UnBanUser -> unBanUser(action.roomMemberSummary)
-            is RoomBannedMemberListAction.Filter    -> handleFilter(action)
-        }.exhaustive
+            is RoomBannedMemberListAction.Filter -> handleFilter(action)
+        }
     }
 
     private fun handleFilter(action: RoomBannedMemberListAction.Filter) {
@@ -123,9 +105,9 @@ class RoomBannedMemberListViewModel @AssistedInject constructor(@Assisted initia
         }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                room.unban(roomMemberSummary.userId, null)
+                room.membershipService().unban(roomMemberSummary.userId, null)
             } catch (failure: Throwable) {
-                _viewEvents.post(RoomBannedMemberListViewEvents.ToastError(stringProvider.getString(R.string.failed_to_unban)))
+                _viewEvents.post(RoomBannedMemberListViewEvents.ToastError(stringProvider.getString(CommonStrings.failed_to_unban)))
             } finally {
                 setState {
                     copy(

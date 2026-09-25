@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 @file:Suppress("DEPRECATION")
@@ -30,27 +21,31 @@ import android.view.ViewGroup
 import android.webkit.SslErrorHandler
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.appcompat.app.AlertDialog
 import com.airbnb.mvrx.activityViewModel
-import im.vector.app.R
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.utils.AssetReader
 import im.vector.app.databinding.FragmentLoginWebBinding
 import im.vector.app.features.signout.soft.SoftLogoutAction
 import im.vector.app.features.signout.soft.SoftLogoutViewModel
-
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.auth.data.Credentials
-import org.matrix.android.sdk.internal.di.MoshiProvider
+import org.matrix.android.sdk.api.util.MatrixJsonParser
 import timber.log.Timber
 import java.net.URLDecoder
 import javax.inject.Inject
 
 /**
  * This screen is displayed when the application does not support login flow or registration flow
- * of the homeserver, as a fallback to login or to create an account
+ * of the homeserver, as a fallback to login or to create an account.
  */
-class LoginWebFragment @Inject constructor(
-        private val assetReader: AssetReader
-) : AbstractLoginFragment<FragmentLoginWebBinding>() {
+@AndroidEntryPoint
+class LoginWebFragment :
+        AbstractLoginFragment<FragmentLoginWebBinding>() {
+
+    @Inject lateinit var assetReader: AssetReader
+
+    private val softLogoutViewModel: SoftLogoutViewModel by activityViewModel()
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentLoginWebBinding {
         return FragmentLoginWebBinding.inflate(inflater, container, false)
@@ -63,6 +58,7 @@ class LoginWebFragment @Inject constructor(
         super.onViewCreated(view, savedInstanceState)
 
         setupToolbar(views.loginWebToolbar)
+                .allowBack()
     }
 
     override fun updateWithState(state: LoginViewState) {
@@ -77,9 +73,9 @@ class LoginWebFragment @Inject constructor(
     }
 
     private fun setupTitle(state: LoginViewState) {
-        views.loginWebToolbar.title = when (state.signMode) {
-            SignMode.SignIn -> getString(R.string.login_signin)
-            else            -> getString(R.string.login_signup)
+        toolbar?.title = when (state.signMode) {
+            SignMode.SignIn -> getString(CommonStrings.login_signin)
+            else -> getString(CommonStrings.login_signup)
         }
     }
 
@@ -121,12 +117,14 @@ class LoginWebFragment @Inject constructor(
         views.loginWebWebView.loadUrl(url)
 
         views.loginWebWebView.webViewClient = object : WebViewClient() {
-            override fun onReceivedSslError(view: WebView, handler: SslErrorHandler,
-                                            error: SslError) {
-                AlertDialog.Builder(requireActivity())
-                        .setMessage(R.string.ssl_could_not_verify)
-                        .setPositiveButton(R.string.ssl_trust) { _, _ -> handler.proceed() }
-                        .setNegativeButton(R.string.ssl_do_not_trust) { _, _ -> handler.cancel() }
+            override fun onReceivedSslError(
+                    view: WebView, handler: SslErrorHandler,
+                    error: SslError
+            ) {
+                MaterialAlertDialogBuilder(requireActivity())
+                        .setMessage(CommonStrings.ssl_could_not_verify)
+                        .setPositiveButton(CommonStrings.ssl_trust) { _, _ -> handler.proceed() }
+                        .setNegativeButton(CommonStrings.ssl_do_not_trust) { _, _ -> handler.cancel() }
                         .setOnKeyListener(DialogInterface.OnKeyListener { dialog, keyCode, event ->
                             if (event.action == KeyEvent.ACTION_UP && keyCode == KeyEvent.KEYCODE_BACK) {
                                 handler.cancel()
@@ -139,6 +137,7 @@ class LoginWebFragment @Inject constructor(
                         .show()
             }
 
+            @Deprecated("Deprecated in Java")
             override fun onReceivedError(view: WebView, errorCode: Int, description: String, failingUrl: String) {
                 super.onReceivedError(view, errorCode, description, failingUrl)
 
@@ -148,7 +147,7 @@ class LoginWebFragment @Inject constructor(
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
 
-                views.loginWebToolbar.subtitle = url
+                toolbar?.subtitle = url
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -186,11 +185,12 @@ class LoginWebFragment @Inject constructor(
              *             }
              *         }
              *    }
-             * </pre>
+             * </pre>.
              * @param view
              * @param url
              * @return
              */
+            @Deprecated("Deprecated in Java")
             override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean {
                 if (url == null) return super.shouldOverrideUrlLoading(view, url as String?)
 
@@ -201,7 +201,7 @@ class LoginWebFragment @Inject constructor(
                     try {
                         // URL decode
                         json = URLDecoder.decode(json, "UTF-8")
-                        val adapter = MoshiProvider.providesMoshi().adapter(JavascriptResponse::class.java)
+                        val adapter = MatrixJsonParser.getMoshi().adapter(JavascriptResponse::class.java)
                         javascriptResponse = adapter.fromJson(json)
                     } catch (e: Exception) {
                         Timber.e(e, "## shouldOverrideUrlLoading() : fromJson failed")
@@ -233,7 +233,6 @@ class LoginWebFragment @Inject constructor(
 
     private fun notifyViewModel(credentials: Credentials) {
         if (isForSessionRecovery) {
-            val softLogoutViewModel: SoftLogoutViewModel by activityViewModel()
             softLogoutViewModel.handle(SoftLogoutAction.WebLoginSuccess(credentials))
         } else {
             loginViewModel.handle(LoginAction.WebLoginSuccess(credentials))
@@ -246,9 +245,9 @@ class LoginWebFragment @Inject constructor(
 
     override fun onBackPressed(toolbarButton: Boolean): Boolean {
         return when {
-            toolbarButton                     -> super.onBackPressed(toolbarButton)
+            toolbarButton -> super.onBackPressed(toolbarButton)
             views.loginWebWebView.canGoBack() -> views.loginWebWebView.goBack().run { true }
-            else                              -> super.onBackPressed(toolbarButton)
+            else -> super.onBackPressed(toolbarButton)
         }
     }
 }

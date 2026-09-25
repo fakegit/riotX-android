@@ -15,6 +15,10 @@
  */
 package org.matrix.android.sdk.api.util
 
+import org.matrix.android.sdk.api.session.room.model.message.MessageFormat
+import org.matrix.android.sdk.api.session.room.model.message.MessageTextContent
+import org.matrix.android.sdk.internal.util.unescapeHtml
+
 object ContentUtils {
     fun extractUsefulTextFromReply(repliedBody: String): String {
         val lines = repliedBody.lines()
@@ -36,12 +40,46 @@ object ContentUtils {
     }
 
     fun extractUsefulTextFromHtmlReply(repliedBody: String): String {
-        if (repliedBody.startsWith("<mx-reply>")) {
-            val closingTagIndex = repliedBody.lastIndexOf("</mx-reply>")
+        if (repliedBody.startsWith(MX_REPLY_START_TAG)) {
+            val closingTagIndex = repliedBody.lastIndexOf(MX_REPLY_END_TAG)
             if (closingTagIndex != -1) {
-                return repliedBody.substring(closingTagIndex + "</mx-reply>".length).trim()
+                return repliedBody.substring(closingTagIndex + MX_REPLY_END_TAG.length).trim()
             }
         }
         return repliedBody
     }
+
+    /**
+     * Not every client sends a formatted body in the last edited event since this is not required in the
+     * [Matrix specification](https://spec.matrix.org/v1.4/client-server-api/#applying-mnew_content).
+     * We must ensure there is one so that it is still considered as a reply when rendering the message.
+     */
+    fun ensureCorrectFormattedBodyInTextReply(messageTextContent: MessageTextContent, originalFormattedBody: String): MessageTextContent {
+        return when {
+            messageTextContent.formattedBody != null &&
+                    !messageTextContent.formattedBody.contains(MX_REPLY_END_TAG) &&
+                    originalFormattedBody.contains(MX_REPLY_END_TAG) -> {
+                // take previous formatted body with the new body content
+                val newFormattedBody = originalFormattedBody.replaceAfterLast(MX_REPLY_END_TAG, messageTextContent.body)
+                messageTextContent.copy(
+                        formattedBody = newFormattedBody,
+                        format = MessageFormat.FORMAT_MATRIX_HTML,
+                )
+            }
+            else -> messageTextContent
+        }
+    }
+
+    @Suppress("RegExpRedundantEscape")
+    fun formatSpoilerTextFromHtml(formattedBody: String): String {
+        // var reason = "",
+        // can capture the spoiler reason for better formatting? ex. { reason = it.value;  ">"}
+        return formattedBody.replace("(?<=<span data-mx-spoiler)=\\\".+?\\\">".toRegex(), ">")
+                .replace("(?<=<span data-mx-spoiler>).+?(?=</span>)".toRegex()) { SPOILER_CHAR.repeat(it.value.length) }
+                .unescapeHtml()
+    }
+
+    private const val SPOILER_CHAR = "█"
+    private const val MX_REPLY_START_TAG = "<mx-reply>"
+    private const val MX_REPLY_END_TAG = "</mx-reply>"
 }

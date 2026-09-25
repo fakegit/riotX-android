@@ -17,6 +17,7 @@ package org.matrix.android.sdk.internal.session.filter
 
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
+import org.matrix.android.sdk.api.session.sync.model.RoomSync
 import org.matrix.android.sdk.internal.di.MoshiProvider
 
 /**
@@ -24,7 +25,7 @@ import org.matrix.android.sdk.internal.di.MoshiProvider
  * https://matrix.org/docs/spec/client_server/r0.3.0.html#post-matrix-client-r0-user-userid-filter
  */
 @JsonClass(generateAdapter = true)
-data class RoomEventFilter(
+internal data class RoomEventFilter(
         /**
          * The maximum number of events to return.
          */
@@ -49,6 +50,17 @@ data class RoomEventFilter(
          */
         @Json(name = "types") val types: List<String>? = null,
         /**
+         * A list of relation types which must be exist pointing to the event being filtered.
+         * If this list is absent then no filtering is done on relation types.
+         */
+        @Json(name = "related_by_rel_types") val relationTypes: List<String>? = null,
+        /**
+         *  A list of senders of relations which must exist pointing to the event being filtered.
+         *  If this list is absent then no filtering is done on relation types.
+         */
+        @Json(name = "related_by_senders") val relationSenders: List<String>? = null,
+
+        /**
          * A list of room IDs to include. If this list is absent then all rooms are included.
          */
         @Json(name = "rooms") val rooms: List<String>? = null,
@@ -63,9 +75,15 @@ data class RoomEventFilter(
          */
         @Json(name = "contains_url") val containsUrl: Boolean? = null,
         /**
-         * If true, enables lazy-loading of membership events. See Lazy-loading room members for more information. Defaults to false.
+         * If true, enables lazy-loading of membership events.
+         * See Lazy-loading room members for more information.
+         * Defaults to false.
          */
-        @Json(name = "lazy_load_members") val lazyLoadMembers: Boolean? = null
+        @Json(name = "lazy_load_members") val lazyLoadMembers: Boolean? = null,
+        /**
+         * If true, this will opt-in for the server to return unread threads notifications in [RoomSync].
+         */
+        @Json(name = "unread_thread_notifications") val enableUnreadThreadNotifications: Boolean? = null,
 ) {
 
     fun toJSONString(): String {
@@ -73,14 +91,15 @@ data class RoomEventFilter(
     }
 
     fun hasData(): Boolean {
-        return (limit != null
-                || notSenders != null
-                || notTypes != null
-                || senders != null
-                || types != null
-                || rooms != null
-                || notRooms != null
-                || containsUrl != null
-                || lazyLoadMembers != null)
+        return (limit != null ||
+                notSenders != null ||
+                notTypes != null ||
+                senders != null ||
+                types != null ||
+                rooms != null ||
+                notRooms != null ||
+                containsUrl != null ||
+                lazyLoadMembers != null ||
+                enableUnreadThreadNotifications != null)
     }
 }

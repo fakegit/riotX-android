@@ -28,10 +28,16 @@
             app:fragment="im.vector.app.features.settings.threepids.ThreePidsSettingsFragment" />
 
         <im.vector.app.core.preference.VectorPreference
+            android:key="SETTINGS_DISCOVERY_PREFERENCE_KEY"
             android:persistent="false"
             android:summary="@string/settings_discovery_manage"
-            android:title="@string/settings_discovery_category"
-            app:fragment="im.vector.app.features.discovery.DiscoverySettingsFragment" />
+            android:title="@string/settings_discovery_category" />
+
+        <im.vector.app.core.preference.VectorPreference
+            android:key="SETTINGS_EXTERNAL_ACCOUNT_MANAGEMENT_KEY"
+            android:persistent="false"
+            android:summary="@string/settings_external_account_management"
+            android:title="@string/settings_external_account_management_title" />
 
     </im.vector.app.core.preference.VectorPreferenceCategory>
 
@@ -87,7 +93,6 @@
         <im.vector.app.core.preference.VectorPreference
             android:key="SETTINGS_IDENTITY_SERVER_PREFERENCE_KEY"
             android:title="@string/settings_identity_server"
-            app:fragment="im.vector.app.features.discovery.DiscoverySettingsFragment"
             tools:summary="https://identity.server.url" />
 
         <im.vector.app.core.preference.VectorPreference
@@ -108,7 +113,9 @@
 
     </im.vector.app.core.preference.VectorPreferenceCategory>
 
-    <im.vector.app.core.preference.VectorPreferenceCategory android:title="@string/settings_deactivate_account_section">
+    <im.vector.app.core.preference.VectorPreferenceCategory
+        android:key="SETTINGS_DEACTIVATE_ACCOUNT_CATEGORY_KEY"
+        android:title="@string/settings_deactivate_account_section">
 
         <im.vector.app.core.preference.VectorPreference
             android:key="SETTINGS_DEACTIVATE_ACCOUNT_KEY"

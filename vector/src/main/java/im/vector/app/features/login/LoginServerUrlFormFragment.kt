@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.login
@@ -25,23 +16,31 @@ import android.view.inputmethod.EditorInfo
 import android.widget.ArrayAdapter
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.textfield.TextInputLayout
-import com.jakewharton.rxbinding3.widget.textChanges
-import im.vector.app.BuildConfig
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
 import im.vector.app.core.extensions.hideKeyboard
+import im.vector.app.core.resources.BuildMeta
 import im.vector.app.core.utils.ensureProtocol
 import im.vector.app.core.utils.openUrlInChromeCustomTab
 import im.vector.app.databinding.FragmentLoginServerUrlFormBinding
-
+import im.vector.lib.strings.CommonStrings
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import org.matrix.android.sdk.api.failure.Failure
+import reactivecircus.flowbinding.android.widget.textChanges
 import java.net.UnknownHostException
 import javax.inject.Inject
 
 /**
- * In this screen, the user is prompted to enter a homeserver url
+ * In this screen, the user is prompted to enter a homeserver url.
  */
-class LoginServerUrlFormFragment @Inject constructor() : AbstractLoginFragment<FragmentLoginServerUrlFormBinding>() {
+@AndroidEntryPoint
+class LoginServerUrlFormFragment :
+        AbstractLoginFragment<FragmentLoginServerUrlFormBinding>() {
+
+    @Inject lateinit var buildMeta: BuildMeta
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentLoginServerUrlFormBinding {
         return FragmentLoginServerUrlFormBinding.inflate(inflater, container, false)
@@ -55,18 +54,18 @@ class LoginServerUrlFormFragment @Inject constructor() : AbstractLoginFragment<F
     }
 
     private fun setupViews() {
-        views.loginServerUrlFormLearnMore.setOnClickListener { learnMore() }
-        views.loginServerUrlFormClearHistory.setOnClickListener { clearHistory() }
-        views.loginServerUrlFormSubmit.setOnClickListener { submit() }
+        views.loginServerUrlFormLearnMore.debouncedClicks { learnMore() }
+        views.loginServerUrlFormClearHistory.debouncedClicks { clearHistory() }
+        views.loginServerUrlFormSubmit.debouncedClicks { submit() }
     }
 
     private fun setupHomeServerField() {
         views.loginServerUrlFormHomeServerUrl.textChanges()
-                .subscribe {
+                .onEach {
                     views.loginServerUrlFormHomeServerUrlTil.error = null
                     views.loginServerUrlFormSubmit.isEnabled = it.isNotBlank()
                 }
-                .disposeOnDestroyView()
+                .launchIn(viewLifecycleOwner.lifecycleScope)
 
         views.loginServerUrlFormHomeServerUrl.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_DONE) {
@@ -82,27 +81,29 @@ class LoginServerUrlFormFragment @Inject constructor() : AbstractLoginFragment<F
         when (state.serverType) {
             ServerType.EMS -> {
                 views.loginServerUrlFormIcon.isVisible = true
-                views.loginServerUrlFormTitle.text = getString(R.string.login_connect_to_modular)
-                views.loginServerUrlFormText.text = getString(R.string.login_server_url_form_modular_text)
+                views.loginServerUrlFormTitle.text = getString(CommonStrings.login_connect_to_modular)
+                views.loginServerUrlFormText.text = getString(CommonStrings.login_server_url_form_modular_text)
                 views.loginServerUrlFormLearnMore.isVisible = true
-                views.loginServerUrlFormHomeServerUrlTil.hint = getText(R.string.login_server_url_form_modular_hint)
-                views.loginServerUrlFormNotice.text = getString(R.string.login_server_url_form_modular_notice)
+                views.loginServerUrlFormHomeServerUrlTil.hint = getText(CommonStrings.login_server_url_form_modular_hint)
+                views.loginServerUrlFormNotice.text = getString(CommonStrings.login_server_url_form_modular_notice)
             }
-            else           -> {
+            else -> {
                 views.loginServerUrlFormIcon.isVisible = false
-                views.loginServerUrlFormTitle.text = getString(R.string.login_server_other_title)
-                views.loginServerUrlFormText.text = getString(R.string.login_connect_to_a_custom_server)
+                views.loginServerUrlFormTitle.text = getString(CommonStrings.login_server_other_title)
+                views.loginServerUrlFormText.text = getString(CommonStrings.login_connect_to_a_custom_server)
                 views.loginServerUrlFormLearnMore.isVisible = false
-                views.loginServerUrlFormHomeServerUrlTil.hint = getText(R.string.login_server_url_form_other_hint)
-                views.loginServerUrlFormNotice.text = getString(R.string.login_server_url_form_common_notice)
+                views.loginServerUrlFormHomeServerUrlTil.hint = getText(CommonStrings.login_server_url_form_other_hint)
+                views.loginServerUrlFormNotice.text = getString(CommonStrings.login_server_url_form_common_notice)
             }
         }
-        val completions = state.knownCustomHomeServersUrls + if (BuildConfig.DEBUG) listOf("http://10.0.2.2:8080") else emptyList()
-        views.loginServerUrlFormHomeServerUrl.setAdapter(ArrayAdapter(
-                requireContext(),
-                R.layout.item_completion_homeserver,
-                completions
-        ))
+        val completions = state.knownCustomHomeServersUrls + if (buildMeta.isDebug) listOf("http://10.0.2.2:8080") else emptyList()
+        views.loginServerUrlFormHomeServerUrl.setAdapter(
+                ArrayAdapter(
+                        requireContext(),
+                        R.layout.item_completion_homeserver,
+                        completions
+                )
+        )
         views.loginServerUrlFormHomeServerUrlTil.endIconMode = TextInputLayout.END_ICON_DROPDOWN_MENU
                 .takeIf { completions.isNotEmpty() }
                 ?: TextInputLayout.END_ICON_NONE
@@ -129,9 +130,9 @@ class LoginServerUrlFormFragment @Inject constructor() : AbstractLoginFragment<F
 
         when {
             serverUrl.isBlank() -> {
-                views.loginServerUrlFormHomeServerUrlTil.error = getString(R.string.login_error_invalid_home_server)
+                views.loginServerUrlFormHomeServerUrlTil.error = getString(CommonStrings.login_error_invalid_home_server)
             }
-            else                -> {
+            else -> {
                 views.loginServerUrlFormHomeServerUrl.setText(serverUrl, false /* to avoid completion dialog flicker*/)
                 loginViewModel.handle(LoginAction.UpdateHomeServer(serverUrl))
             }
@@ -144,10 +145,10 @@ class LoginServerUrlFormFragment @Inject constructor() : AbstractLoginFragment<F
     }
 
     override fun onError(throwable: Throwable) {
-        views.loginServerUrlFormHomeServerUrlTil.error = if (throwable is Failure.NetworkConnection
-                && throwable.ioException is UnknownHostException) {
+        views.loginServerUrlFormHomeServerUrlTil.error = if (throwable is Failure.NetworkConnection &&
+                throwable.ioException is UnknownHostException) {
             // Invalid homeserver?
-            getString(R.string.login_error_homeserver_not_found)
+            getString(CommonStrings.login_error_homeserver_not_found)
         } else {
             errorFormatter.toHumanReadable(throwable)
         }
@@ -157,10 +158,5 @@ class LoginServerUrlFormFragment @Inject constructor() : AbstractLoginFragment<F
         setupUi(state)
 
         views.loginServerUrlFormClearHistory.isInvisible = state.knownCustomHomeServersUrls.isEmpty()
-
-        if (state.loginMode != LoginMode.Unknown) {
-            // The home server url is valid
-            loginViewModel.handle(LoginAction.PostViewEvent(LoginViewEvents.OnLoginFlowRetrieved))
-        }
     }
 }

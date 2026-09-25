@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.settings.devices
@@ -23,20 +14,23 @@ import androidx.core.view.isVisible
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
 import im.vector.app.R
+import im.vector.app.core.epoxy.ClickListener
 import im.vector.app.core.epoxy.VectorEpoxyHolder
 import im.vector.app.core.epoxy.VectorEpoxyModel
+import im.vector.app.core.epoxy.onClick
 import im.vector.app.core.resources.ColorProvider
 import im.vector.app.core.ui.views.ShieldImageView
 import im.vector.app.core.utils.DimensionConverter
+import im.vector.lib.strings.CommonStrings
 import me.gujun.android.span.span
-import org.matrix.android.sdk.internal.crypto.crosssigning.DeviceTrustLevel
-import org.matrix.android.sdk.internal.crypto.model.rest.DeviceInfo
+import org.matrix.android.sdk.api.session.crypto.crosssigning.DeviceTrustLevel
+import org.matrix.android.sdk.api.session.crypto.model.DeviceInfo
 
 /**
  * A list item for Device.
  */
-@EpoxyModelClass(layout = R.layout.item_device)
-abstract class DeviceItem : VectorEpoxyModel<DeviceItem.Holder>() {
+@EpoxyModelClass
+abstract class DeviceItem : VectorEpoxyModel<DeviceItem.Holder>(R.layout.item_device) {
 
     @EpoxyAttribute
     lateinit var deviceInfo: DeviceInfo
@@ -47,8 +41,8 @@ abstract class DeviceItem : VectorEpoxyModel<DeviceItem.Holder>() {
     @EpoxyAttribute
     var currentDevice = false
 
-    @EpoxyAttribute
-    var itemClickAction: (() -> Unit)? = null
+    @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
+    var itemClickAction: ClickListener? = null
 
     @EpoxyAttribute
     var detailedMode = false
@@ -73,7 +67,7 @@ abstract class DeviceItem : VectorEpoxyModel<DeviceItem.Holder>() {
 
     override fun bind(holder: Holder) {
         super.bind(holder)
-        holder.root.setOnClickListener { itemClickAction?.invoke() }
+        holder.root.onClick(itemClickAction)
 
         if (e2eCapable) {
             val shield = TrustUtils.shieldForTrust(
@@ -83,9 +77,9 @@ abstract class DeviceItem : VectorEpoxyModel<DeviceItem.Holder>() {
                     trusted
             )
 
-            holder.trustIcon.render(shield)
+            holder.trustIcon.renderDeviceShield(shield)
         } else {
-            holder.trustIcon.render(null)
+            holder.trustIcon.renderDeviceShield(null)
         }
 
         val detailedModeLabels = listOf(
@@ -106,7 +100,7 @@ abstract class DeviceItem : VectorEpoxyModel<DeviceItem.Holder>() {
 
             val lastSeenTime = lastSeenFormatted ?: "-"
 
-            holder.deviceLastSeenText.text = holder.root.context.getString(R.string.devices_details_last_seen_format, lastSeenIp, lastSeenTime)
+            holder.deviceLastSeenText.text = holder.root.context.getString(CommonStrings.devices_details_last_seen_format, lastSeenIp, lastSeenTime)
 
             detailedModeLabels.map {
                 it.isVisible = true
@@ -123,7 +117,7 @@ abstract class DeviceItem : VectorEpoxyModel<DeviceItem.Holder>() {
                                 span {
                                     text = "${deviceInfo.deviceId}"
                                     apply {
-                                        colorProvider?.getColorFromAttribute(R.attr.riotx_text_secondary)?.let {
+                                        colorProvider?.getColorFromAttribute(im.vector.lib.ui.styles.R.attr.vctr_content_secondary)?.let {
                                             textColor = it
                                         }
                                         dimensionConverter?.spToPx(12)?.let {

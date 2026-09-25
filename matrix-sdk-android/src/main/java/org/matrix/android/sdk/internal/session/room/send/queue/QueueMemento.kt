@@ -19,9 +19,11 @@ package org.matrix.android.sdk.internal.session.room.send.queue
 import android.content.Context
 import org.matrix.android.sdk.api.extensions.tryOrNull
 import org.matrix.android.sdk.api.session.crypto.CryptoService
+import org.matrix.android.sdk.api.session.events.model.toModel
 import org.matrix.android.sdk.api.session.room.send.SendState
 import org.matrix.android.sdk.internal.di.SessionId
 import org.matrix.android.sdk.internal.session.room.send.LocalEchoRepository
+import org.matrix.android.sdk.internal.session.room.send.model.EventRedactBody
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -35,11 +37,13 @@ import javax.inject.Inject
 
 private const val PERSISTENCE_KEY = "ManagedBySender"
 
-internal class QueueMemento @Inject constructor(context: Context,
-                                                @SessionId sessionId: String,
-                                                private val queuedTaskFactory: QueuedTaskFactory,
-                                                private val localEchoRepository: LocalEchoRepository,
-                                                private val cryptoService: CryptoService) {
+internal class QueueMemento @Inject constructor(
+        context: Context,
+        @SessionId sessionId: String,
+        private val queuedTaskFactory: QueuedTaskFactory,
+        private val localEchoRepository: LocalEchoRepository,
+        private val cryptoService: CryptoService
+) {
 
     private val storage = context.getSharedPreferences("QueueMemento_$sessionId", Context.MODE_PRIVATE)
     private val trackedTasks = mutableListOf<QueuedTask>()
@@ -78,7 +82,7 @@ internal class QueueMemento @Inject constructor(context: Context,
                     redactionLocalEcho = task.redactionLocalEchoId,
                     order = order
             )
-            else                   -> null
+            else -> null
         }
     }
 
@@ -105,10 +109,18 @@ internal class QueueMemento @Inject constructor(context: Context,
                                 info.redactionLocalEcho?.let { localEchoRepository.getUpToDateEcho(it) }?.let {
                                     localEchoRepository.updateSendState(it.eventId!!, it.roomId, SendState.UNSENT)
                                     // try to get reason
-                                    val reason = it.content?.get("reason") as? String
+                                    val body = it.content.toModel<EventRedactBody>()
                                     if (it.redacts != null && it.roomId != null) {
                                         Timber.d("## Send -Reschedule redact $info")
-                                        eventProcessor.postTask(queuedTaskFactory.createRedactTask(it.eventId, it.redacts, it.roomId, reason))
+                                        eventProcessor.postTask(
+                                                queuedTaskFactory.createRedactTask(
+                                                        redactionLocalEcho = it.eventId,
+                                                        eventId = it.redacts,
+                                                        roomId = it.roomId,
+                                                        reason = body?.reason,
+                                                        withRelTypes = body?.getBestWithRelTypes(),
+                                                )
+                                        )
                                     }
                                 }
                                 // postTask(queuedTaskFactory.createRedactTask(info.eventToRedactId, info.)

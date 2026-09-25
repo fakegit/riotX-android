@@ -21,8 +21,9 @@ import org.matrix.android.sdk.api.NoOpMatrixCallback
 import org.matrix.android.sdk.api.util.Cancelable
 import java.util.UUID
 
-internal fun <PARAMS, RESULT> Task<PARAMS, RESULT>.configureWith(params: PARAMS,
-                                                                 init: (ConfigurableTask.Builder<PARAMS, RESULT>.() -> Unit) = {}
+internal fun <PARAMS, RESULT> Task<PARAMS, RESULT>.configureWith(
+        params: PARAMS,
+        init: (ConfigurableTask.Builder<PARAMS, RESULT>.() -> Unit) = {}
 ): ConfigurableTask<PARAMS, RESULT> {
     return ConfigurableTask.Builder(this, params).apply(init).build()
 }
@@ -37,7 +38,8 @@ internal data class ConfigurableTask<PARAMS, RESULT>(
         val id: UUID,
         val callbackThread: TaskThread,
         val executionThread: TaskThread,
-        val callback: MatrixCallback<RESULT>
+        val callback: MatrixCallback<RESULT>,
+        val maxRetryCount: Int = 0
 
 ) : Task<PARAMS, RESULT> by task {
 
@@ -57,7 +59,8 @@ internal data class ConfigurableTask<PARAMS, RESULT>(
                 id = id,
                 callbackThread = callbackThread,
                 executionThread = executionThread,
-                callback = callback
+                callback = callback,
+                maxRetryCount = retryCount
         )
     }
 

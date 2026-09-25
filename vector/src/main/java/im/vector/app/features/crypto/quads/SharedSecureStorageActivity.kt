@@ -1,44 +1,35 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.crypto.quads
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.Parcelable
 import android.view.View
-import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentOnAttachListener
-import com.airbnb.mvrx.MvRx
+import com.airbnb.mvrx.Mavericks
 import com.airbnb.mvrx.viewModel
-import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
-import im.vector.app.core.error.ErrorFormatter
-import im.vector.app.core.extensions.commitTransaction
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
+import im.vector.app.core.extensions.replaceFragment
 import im.vector.app.core.platform.SimpleFragmentActivity
 import im.vector.app.core.platform.VectorBaseBottomSheetDialogFragment
 import im.vector.app.features.crypto.recover.SetupMode
+import im.vector.lib.strings.CommonStrings
 import kotlinx.parcelize.Parcelize
-import javax.inject.Inject
 import kotlin.reflect.KClass
 
+@AndroidEntryPoint
 class SharedSecureStorageActivity :
         SimpleFragmentActivity(),
         VectorBaseBottomSheetDialogFragment.ResultListener,
@@ -47,18 +38,13 @@ class SharedSecureStorageActivity :
     @Parcelize
     data class Args(
             val keyId: String?,
-            val requestedSecrets: List<String>,
-            val resultKeyStoreAlias: String
+            val requestedSecrets: List<String> = emptyList(),
+            val resultKeyStoreAlias: String,
+            val writeSecrets: List<Pair<String, String>> = emptyList(),
+            val currentStep: SharedSecureStorageViewState.Step = SharedSecureStorageViewState.Step.EnterPassphrase,
     ) : Parcelable
 
     private val viewModel: SharedSecureStorageViewModel by viewModel()
-    @Inject lateinit var viewModelFactory: SharedSecureStorageViewModel.Factory
-    @Inject lateinit var errorFormatter: ErrorFormatter
-
-    override fun injectWith(injector: ScreenComponent) {
-        super.injectWith(injector)
-        injector.inject(this)
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,9 +52,9 @@ class SharedSecureStorageActivity :
 
         views.toolbar.visibility = View.GONE
 
-        viewModel.observeViewEvents { observeViewEvents(it) }
+        viewModel.observeViewEvents { onViewEvents(it) }
 
-        viewModel.subscribe(this) { renderState(it) }
+        viewModel.onEach { renderState(it) }
     }
 
     override fun onDestroy() {
@@ -76,6 +62,8 @@ class SharedSecureStorageActivity :
         supportFragmentManager.removeFragmentOnAttachListener(this)
     }
 
+    @Suppress("OVERRIDE_DEPRECATION")
+    @SuppressLint("MissingSuperCall")
     override fun onBackPressed() {
         viewModel.handle(SharedSecureStorageAction.Back)
     }
@@ -85,48 +73,49 @@ class SharedSecureStorageActivity :
         val fragment =
                 when (state.step) {
                     SharedSecureStorageViewState.Step.EnterPassphrase -> SharedSecuredStoragePassphraseFragment::class
-                    SharedSecureStorageViewState.Step.EnterKey        -> SharedSecuredStorageKeyFragment::class
-                    SharedSecureStorageViewState.Step.ResetAll        -> SharedSecuredStorageResetAllFragment::class
+                    SharedSecureStorageViewState.Step.EnterKey -> SharedSecuredStorageKeyFragment::class
+                    SharedSecureStorageViewState.Step.ResetAll -> SharedSecuredStorageResetAllFragment::class
                 }
 
-        showFragment(fragment, Bundle())
+        showFragment(fragment)
     }
 
-    private fun observeViewEvents(it: SharedSecureStorageViewEvent?) {
+    private fun onViewEvents(it: SharedSecureStorageViewEvent) {
         when (it) {
-            is SharedSecureStorageViewEvent.Dismiss              -> {
+            is SharedSecureStorageViewEvent.Dismiss -> {
                 finish()
             }
-            is SharedSecureStorageViewEvent.Error                -> {
-                AlertDialog.Builder(this)
-                        .setTitle(getString(R.string.dialog_title_error))
+            is SharedSecureStorageViewEvent.Error -> {
+                MaterialAlertDialogBuilder(this)
+                        .setTitle(getString(CommonStrings.dialog_title_error))
                         .setMessage(it.message)
                         .setCancelable(false)
-                        .setPositiveButton(R.string.ok) { _, _ ->
+                        .setPositiveButton(CommonStrings.ok) { _, _ ->
                             if (it.dismiss) {
                                 finish()
                             }
                         }
                         .show()
             }
-            is SharedSecureStorageViewEvent.ShowModalLoading     -> {
+            is SharedSecureStorageViewEvent.ShowModalLoading -> {
                 showWaitingView()
             }
-            is SharedSecureStorageViewEvent.HideModalLoading     -> {
+            is SharedSecureStorageViewEvent.HideModalLoading -> {
                 hideWaitingView()
             }
-            is SharedSecureStorageViewEvent.UpdateLoadingState   -> {
+            is SharedSecureStorageViewEvent.UpdateLoadingState -> {
                 updateWaitingView(it.waitingData)
             }
-            is SharedSecureStorageViewEvent.FinishSuccess        -> {
+            is SharedSecureStorageViewEvent.FinishSuccess -> {
                 val dataResult = Intent()
                 dataResult.putExtra(EXTRA_DATA_RESULT, it.cypherResult)
-                setResult(Activity.RESULT_OK, dataResult)
+                setResult(RESULT_OK, dataResult)
                 finish()
             }
             is SharedSecureStorageViewEvent.ShowResetBottomSheet -> {
                 navigator.open4SSetup(this, SetupMode.HARD_RESET)
             }
+            else -> Unit
         }
     }
 
@@ -136,15 +125,14 @@ class SharedSecureStorageActivity :
         }
     }
 
-    private fun showFragment(fragmentClass: KClass<out Fragment>, bundle: Bundle) {
+    private fun showFragment(fragmentClass: KClass<out Fragment>) {
         if (supportFragmentManager.findFragmentByTag(fragmentClass.simpleName) == null) {
-            supportFragmentManager.commitTransaction {
-                replace(R.id.container,
-                        fragmentClass.java,
-                        bundle,
-                        fragmentClass.simpleName
-                )
-            }
+            replaceFragment(
+                    views.container,
+                    fragmentClass.java,
+                    null,
+                    fragmentClass.simpleName
+            )
         }
     }
 
@@ -153,17 +141,45 @@ class SharedSecureStorageActivity :
         const val EXTRA_DATA_RESET = "EXTRA_DATA_RESET"
         const val DEFAULT_RESULT_KEYSTORE_ALIAS = "SharedSecureStorageActivity"
 
-        fun newIntent(context: Context,
-                      keyId: String? = null,
-                      requestedSecrets: List<String>,
-                      resultKeyStoreAlias: String = DEFAULT_RESULT_KEYSTORE_ALIAS): Intent {
+        fun newReadIntent(
+                context: Context,
+                keyId: String? = null,
+                requestedSecrets: List<String>,
+                resultKeyStoreAlias: String = DEFAULT_RESULT_KEYSTORE_ALIAS,
+                initialStep: SharedSecureStorageViewState.Step = SharedSecureStorageViewState.Step.EnterPassphrase
+        ): Intent {
             require(requestedSecrets.isNotEmpty())
             return Intent(context, SharedSecureStorageActivity::class.java).also {
-                it.putExtra(MvRx.KEY_ARG, Args(
-                        keyId,
-                        requestedSecrets,
-                        resultKeyStoreAlias
-                ))
+                it.putExtra(
+                        Mavericks.KEY_ARG,
+                        Args(
+                                keyId = keyId,
+                                requestedSecrets = requestedSecrets,
+                                resultKeyStoreAlias = resultKeyStoreAlias,
+                                currentStep = initialStep
+                        )
+                )
+            }
+        }
+
+        fun newWriteIntent(
+                context: Context,
+                keyId: String? = null,
+                writeSecrets: List<Pair<String, String>>,
+                resultKeyStoreAlias: String = DEFAULT_RESULT_KEYSTORE_ALIAS,
+                initialStep: SharedSecureStorageViewState.Step = SharedSecureStorageViewState.Step.EnterPassphrase
+        ): Intent {
+            require(writeSecrets.isNotEmpty())
+            return Intent(context, SharedSecureStorageActivity::class.java).also {
+                it.putExtra(
+                        Mavericks.KEY_ARG,
+                        Args(
+                                keyId = keyId,
+                                writeSecrets = writeSecrets,
+                                resultKeyStoreAlias = resultKeyStoreAlias,
+                                currentStep = initialStep,
+                        )
+                )
             }
         }
     }

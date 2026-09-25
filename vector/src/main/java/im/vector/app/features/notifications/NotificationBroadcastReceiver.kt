@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.notifications
@@ -20,13 +11,18 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.RemoteInput
-import im.vector.app.R
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.di.ActiveSessionHolder
-import im.vector.app.core.extensions.vectorComponent
-import kotlinx.coroutines.GlobalScope
+import im.vector.app.features.analytics.AnalyticsTracker
+import im.vector.app.features.analytics.extensions.toAnalyticsJoinedRoom
+import im.vector.app.features.analytics.plan.JoinedRoom
+import im.vector.app.features.session.coroutineScope
+import im.vector.lib.core.utils.timer.Clock
+import im.vector.lib.strings.CommonStrings
 import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.extensions.tryOrNull
 import org.matrix.android.sdk.api.session.Session
+import org.matrix.android.sdk.api.session.getRoom
 import org.matrix.android.sdk.api.session.room.Room
 import org.matrix.android.sdk.api.session.room.read.ReadService
 import timber.log.Timber
@@ -34,41 +30,44 @@ import java.util.UUID
 import javax.inject.Inject
 
 /**
- * Receives actions broadcast by notification (on click, on dismiss, inline replies, etc.)
+ * Receives actions broadcast by notification (on click, on dismiss, inline replies, etc.).
  */
+@AndroidEntryPoint
 class NotificationBroadcastReceiver : BroadcastReceiver() {
 
     @Inject lateinit var notificationDrawerManager: NotificationDrawerManager
     @Inject lateinit var activeSessionHolder: ActiveSessionHolder
+    @Inject lateinit var analyticsTracker: AnalyticsTracker
+    @Inject lateinit var clock: Clock
+    @Inject lateinit var actionIds: NotificationActionIds
 
     override fun onReceive(context: Context?, intent: Intent?) {
         if (intent == null || context == null) return
         Timber.v("NotificationBroadcastReceiver received : $intent")
-        context.vectorComponent().inject(this)
         when (intent.action) {
-            NotificationUtils.SMART_REPLY_ACTION        ->
+            actionIds.smartReply ->
                 handleSmartReply(intent, context)
-            NotificationUtils.DISMISS_ROOM_NOTIF_ACTION ->
-                intent.getStringExtra(KEY_ROOM_ID)?.let {
-                    notificationDrawerManager.clearMessageEventOfRoom(it)
+            actionIds.dismissRoom ->
+                intent.getStringExtra(KEY_ROOM_ID)?.let { roomId ->
+                    notificationDrawerManager.updateEvents { it.clearMessagesForRoom(roomId) }
                 }
-            NotificationUtils.DISMISS_SUMMARY_ACTION    ->
+            actionIds.dismissSummary ->
                 notificationDrawerManager.clearAllEvents()
-            NotificationUtils.MARK_ROOM_READ_ACTION     ->
-                intent.getStringExtra(KEY_ROOM_ID)?.let {
-                    notificationDrawerManager.clearMessageEventOfRoom(it)
-                    handleMarkAsRead(it)
+            actionIds.markRoomRead ->
+                intent.getStringExtra(KEY_ROOM_ID)?.let { roomId ->
+                    notificationDrawerManager.updateEvents { it.clearMessagesForRoom(roomId) }
+                    handleMarkAsRead(roomId)
                 }
-            NotificationUtils.JOIN_ACTION               -> {
-                intent.getStringExtra(KEY_ROOM_ID)?.let {
-                    notificationDrawerManager.clearMemberShipNotificationForRoom(it)
-                    handleJoinRoom(it)
+            actionIds.join -> {
+                intent.getStringExtra(KEY_ROOM_ID)?.let { roomId ->
+                    notificationDrawerManager.updateEvents { it.clearMemberShipNotificationForRoom(roomId) }
+                    handleJoinRoom(roomId)
                 }
             }
-            NotificationUtils.REJECT_ACTION             -> {
-                intent.getStringExtra(KEY_ROOM_ID)?.let {
-                    notificationDrawerManager.clearMemberShipNotificationForRoom(it)
-                    handleRejectRoom(it)
+            actionIds.reject -> {
+                intent.getStringExtra(KEY_ROOM_ID)?.let { roomId ->
+                    notificationDrawerManager.updateEvents { it.clearMemberShipNotificationForRoom(roomId) }
+                    handleRejectRoom(roomId)
                 }
             }
         }
@@ -78,8 +77,11 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
         activeSessionHolder.getSafeActiveSession()?.let { session ->
             val room = session.getRoom(roomId)
             if (room != null) {
-                GlobalScope.launch {
-                    tryOrNull { room.join() }
+                session.coroutineScope.launch {
+                    tryOrNull {
+                        session.roomService().joinRoom(room.roomId)
+                        analyticsTracker.capture(room.roomSummary().toAnalyticsJoinedRoom(JoinedRoom.Trigger.Notification))
+                    }
                 }
             }
         }
@@ -87,11 +89,8 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
 
     private fun handleRejectRoom(roomId: String) {
         activeSessionHolder.getSafeActiveSession()?.let { session ->
-            val room = session.getRoom(roomId)
-            if (room != null) {
-                GlobalScope.launch {
-                    tryOrNull { room.leave() }
-                }
+            session.coroutineScope.launch {
+                tryOrNull { session.roomService().leaveRoom(roomId) }
             }
         }
     }
@@ -100,8 +99,8 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
         activeSessionHolder.getActiveSession().let { session ->
             val room = session.getRoom(roomId)
             if (room != null) {
-                GlobalScope.launch {
-                    tryOrNull { room.markAsRead(ReadService.MarkAsReadParams.READ_RECEIPT) }
+                session.coroutineScope.launch {
+                    tryOrNull { room.readService().markAsRead(ReadService.MarkAsReadParams.READ_RECEIPT, mainTimeLineOnly = false) }
                 }
             }
         }
@@ -110,6 +109,7 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
     private fun handleSmartReply(intent: Intent, context: Context) {
         val message = getReplyMessage(intent)
         val roomId = intent.getStringExtra(KEY_ROOM_ID)
+        val threadId = intent.getStringExtra(KEY_THREAD_ID)
 
         if (message.isNullOrBlank() || roomId.isNullOrBlank()) {
             // ignore this event
@@ -118,34 +118,43 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
         }
         activeSessionHolder.getActiveSession().let { session ->
             session.getRoom(roomId)?.let { room ->
-                sendMatrixEvent(message, session, room, context)
+                sendMatrixEvent(message, threadId, session, room, context)
             }
         }
     }
 
-    private fun sendMatrixEvent(message: String, session: Session, room: Room, context: Context?) {
-        room.sendTextMessage(message)
+    private fun sendMatrixEvent(message: String, threadId: String?, session: Session, room: Room, context: Context?) {
+        if (threadId != null) {
+            room.relationService().replyInThread(
+                    rootThreadEventId = threadId,
+                    replyInThreadText = message,
+            )
+        } else {
+            room.sendService().sendTextMessage(message)
+        }
 
         // Create a new event to be displayed in the notification drawer, right now
 
         val notifiableMessageEvent = NotifiableMessageEvent(
                 // Generate a Fake event id
-                UUID.randomUUID().toString(),
-                null,
-                false,
-                System.currentTimeMillis(),
-                session.getRoomMember(session.myUserId, room.roomId)?.displayName
-                        ?: context?.getString(R.string.notification_sender_me),
-                session.myUserId,
-                message,
-                room.roomId,
-                room.roomSummary()?.displayName ?: room.roomId,
-                room.roomSummary()?.isDirect == true
+                eventId = UUID.randomUUID().toString(),
+                editedEventId = null,
+                noisy = false,
+                timestamp = clock.epochMillis(),
+                senderName = session.roomService().getRoomMember(session.myUserId, room.roomId)?.displayName
+                        ?: context?.getString(CommonStrings.notification_sender_me),
+                senderId = session.myUserId,
+                body = message,
+                imageUriString = null,
+                roomId = room.roomId,
+                threadId = threadId,
+                roomName = room.roomSummary()?.displayName ?: room.roomId,
+                roomIsDirect = room.roomSummary()?.isDirect == true,
+                outGoingMessage = true,
+                canBeReplaced = false
         )
-        notifiableMessageEvent.outGoingMessage = true
 
-        notificationDrawerManager.onNotifiableEventReceived(notifiableMessageEvent)
-        notificationDrawerManager.refreshNotificationDrawer()
+        notificationDrawerManager.updateEvents { it.onNotifiableEventReceived(notifiableMessageEvent) }
 
         /*
         // TODO Error cannot be managed the same way than in Riot
@@ -183,9 +192,9 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
                 val notifiableMessageEvent = NotifiableMessageEvent(
                         event.eventId,
                         false,
-                        System.currentTimeMillis(),
+                        clock.epochMillis(),
                         session.myUser?.displayname
-                                ?: context?.getString(R.string.notification_sender_me),
+                                ?: context?.getString(CommonStrings.notification_sender_me),
                         session.myUserId,
                         message,
                         roomId,
@@ -198,7 +207,7 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
                 VectorApp.getInstance().notificationDrawerManager.refreshNotificationDrawer(null)
             }
         })
-        */
+         */
     }
 
     private fun getReplyMessage(intent: Intent?): String? {
@@ -213,6 +222,7 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
 
     companion object {
         const val KEY_ROOM_ID = "roomID"
+        const val KEY_THREAD_ID = "threadID"
         const val KEY_TEXT_REPLY = "key_text_reply"
     }
 }

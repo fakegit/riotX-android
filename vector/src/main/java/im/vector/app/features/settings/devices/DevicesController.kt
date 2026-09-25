@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.settings.devices
@@ -21,7 +12,6 @@ import com.airbnb.mvrx.Fail
 import com.airbnb.mvrx.Loading
 import com.airbnb.mvrx.Success
 import com.airbnb.mvrx.Uninitialized
-import im.vector.app.R
 import im.vector.app.core.date.DateFormatKind
 import im.vector.app.core.date.VectorDateFormatter
 import im.vector.app.core.epoxy.errorWithRetryItem
@@ -29,26 +19,25 @@ import im.vector.app.core.epoxy.loadingItem
 import im.vector.app.core.error.ErrorFormatter
 import im.vector.app.core.resources.ColorProvider
 import im.vector.app.core.resources.StringProvider
-import im.vector.app.core.ui.list.genericItemHeader
+import im.vector.app.core.ui.list.genericHeaderItem
 import im.vector.app.core.utils.DimensionConverter
 import im.vector.app.features.settings.VectorPreferences
-import org.matrix.android.sdk.internal.crypto.crosssigning.DeviceTrustLevel
-import org.matrix.android.sdk.internal.crypto.model.rest.DeviceInfo
+import im.vector.lib.strings.CommonStrings
+import org.matrix.android.sdk.api.session.crypto.crosssigning.DeviceTrustLevel
+import org.matrix.android.sdk.api.session.crypto.model.DeviceInfo
 import javax.inject.Inject
 
-class DevicesController @Inject constructor(private val errorFormatter: ErrorFormatter,
-                                            private val stringProvider: StringProvider,
-                                            private val colorProvider: ColorProvider,
-                                            private val dateFormatter: VectorDateFormatter,
-                                            private val dimensionConverter: DimensionConverter,
-                                            private val vectorPreferences: VectorPreferences) : EpoxyController() {
+class DevicesController @Inject constructor(
+        private val errorFormatter: ErrorFormatter,
+        private val stringProvider: StringProvider,
+        private val colorProvider: ColorProvider,
+        private val dateFormatter: VectorDateFormatter,
+        private val dimensionConverter: DimensionConverter,
+        private val vectorPreferences: VectorPreferences
+) : EpoxyController() {
 
     var callback: Callback? = null
     private var viewState: DevicesViewState? = null
-
-    init {
-        requestModelBuild()
-    }
 
     fun update(viewState: DevicesViewState) {
         this.viewState = viewState
@@ -61,50 +50,54 @@ class DevicesController @Inject constructor(private val errorFormatter: ErrorFor
     }
 
     private fun buildDevicesModels(state: DevicesViewState) {
+        val host = this
         when (val devices = state.devices) {
             is Loading,
             is Uninitialized ->
                 loadingItem {
                     id("loading")
                 }
-            is Fail          ->
+            is Fail ->
                 errorWithRetryItem {
                     id("error")
-                    text(errorFormatter.toHumanReadable(devices.error))
-                    listener { callback?.retry() }
+                    text(host.errorFormatter.toHumanReadable(devices.error))
+                    listener { host.callback?.retry() }
                 }
-            is Success       ->
+            is Success ->
                 buildDevicesList(devices(), state.myDeviceId, !state.hasAccountCrossSigning, state.accountCrossSigningIsTrusted)
         }
     }
 
-    private fun buildDevicesList(devices: List<DeviceFullInfo>,
-                                 myDeviceId: String,
-                                 legacyMode: Boolean,
-                                 currentSessionCrossTrusted: Boolean) {
+    private fun buildDevicesList(
+            devices: List<DeviceFullInfo>,
+            myDeviceId: String,
+            legacyMode: Boolean,
+            currentSessionCrossTrusted: Boolean
+    ) {
+        val host = this
         devices
                 .firstOrNull {
                     it.deviceInfo.deviceId == myDeviceId
                 }?.let { fullInfo ->
                     val deviceInfo = fullInfo.deviceInfo
                     // Current device
-                    genericItemHeader {
+                    genericHeaderItem {
                         id("current")
-                        text(stringProvider.getString(R.string.devices_current_device))
+                        text(host.stringProvider.getString(CommonStrings.devices_current_device))
                     }
 
                     deviceItem {
                         id("myDevice${deviceInfo.deviceId}")
                         legacyMode(legacyMode)
                         trustedSession(currentSessionCrossTrusted)
-                        dimensionConverter(dimensionConverter)
-                        colorProvider(colorProvider)
-                        detailedMode(vectorPreferences.developerMode())
+                        dimensionConverter(host.dimensionConverter)
+                        colorProvider(host.colorProvider)
+                        detailedMode(host.vectorPreferences.developerMode())
                         deviceInfo(deviceInfo)
                         currentDevice(true)
                         e2eCapable(true)
-                        lastSeenFormatted(dateFormatter.format(deviceInfo.lastSeenTs, DateFormatKind.DEFAULT_DATE_AND_TIME))
-                        itemClickAction { callback?.onDeviceClicked(deviceInfo) }
+                        lastSeenFormatted(host.dateFormatter.format(deviceInfo.lastSeenTs, DateFormatKind.DEFAULT_DATE_AND_TIME))
+                        itemClickAction { host.callback?.onDeviceClicked(deviceInfo) }
                         trusted(DeviceTrustLevel(currentSessionCrossTrusted, true))
                     }
 
@@ -114,7 +107,7 @@ class DevicesController @Inject constructor(private val errorFormatter: ErrorFor
 //                        genericButtonItem {
 //                            id("complete_security")
 //                            iconRes(R.drawable.ic_shield_warning)
-//                            text(stringProvider.getString(R.string.complete_security))
+//                            text(stringProvider.getString(CommonStrings.complete_security))
 //                            buttonClickAction(DebouncedClickListener(View.OnClickListener { _ ->
 //                                callback?.completeSecurity()
 //                            }))
@@ -124,9 +117,9 @@ class DevicesController @Inject constructor(private val errorFormatter: ErrorFor
 
         // Other devices
         if (devices.size > 1) {
-            genericItemHeader {
+            genericHeaderItem {
                 id("others")
-                text(stringProvider.getString(R.string.devices_other_devices))
+                text(host.stringProvider.getString(CommonStrings.devices_other_devices))
             }
 
             devices
@@ -140,12 +133,12 @@ class DevicesController @Inject constructor(private val errorFormatter: ErrorFor
                             id("device$idx")
                             legacyMode(legacyMode)
                             trustedSession(currentSessionCrossTrusted)
-                            dimensionConverter(dimensionConverter)
-                            colorProvider(colorProvider)
-                            detailedMode(vectorPreferences.developerMode())
+                            dimensionConverter(host.dimensionConverter)
+                            colorProvider(host.colorProvider)
+                            detailedMode(host.vectorPreferences.developerMode())
                             deviceInfo(deviceInfo)
                             currentDevice(false)
-                            itemClickAction { callback?.onDeviceClicked(deviceInfo) }
+                            itemClickAction { host.callback?.onDeviceClicked(deviceInfo) }
                             e2eCapable(cryptoInfo != null)
                             trusted(cryptoInfo?.trustLevel)
                         }

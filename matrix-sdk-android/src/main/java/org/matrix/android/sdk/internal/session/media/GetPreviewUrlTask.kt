@@ -41,7 +41,7 @@ internal interface GetPreviewUrlTask : Task<GetPreviewUrlTask.Params, PreviewUrl
 }
 
 internal class DefaultGetPreviewUrlTask @Inject constructor(
-        private val mediaAPI: MediaAPI,
+        private val mediaAPIProvider: MediaAPIProvider,
         private val globalErrorReceiver: GlobalErrorReceiver,
         @SessionDatabase private val monarchy: Monarchy
 ) : GetPreviewUrlTask {
@@ -66,7 +66,7 @@ internal class DefaultGetPreviewUrlTask @Inject constructor(
 
     private suspend fun doRequest(url: String, timestamp: Long?): PreviewUrlData {
         return executeRequest(globalErrorReceiver) {
-            mediaAPI.getPreviewUrlData(url, timestamp)
+            mediaAPIProvider.getMediaAPI().getPreviewUrlData(url, timestamp)
         }
                 .toPreviewUrlData(url)
     }
@@ -77,7 +77,9 @@ internal class DefaultGetPreviewUrlTask @Inject constructor(
                 siteName = (get("og:site_name") as? String)?.unescapeHtml(),
                 title = (get("og:title") as? String)?.unescapeHtml(),
                 description = (get("og:description") as? String)?.unescapeHtml(),
-                mxcUrl = get("og:image") as? String
+                mxcUrl = get("og:image") as? String,
+                imageHeight = (get("og:image:height") as? Double)?.toInt(),
+                imageWidth = (get("og:image:width") as? Double)?.toInt(),
         )
     }
 
@@ -114,7 +116,8 @@ internal class DefaultGetPreviewUrlTask @Inject constructor(
             previewUrlCacheEntity.title = data.title
             previewUrlCacheEntity.description = data.description
             previewUrlCacheEntity.mxcUrl = data.mxcUrl
-
+            previewUrlCacheEntity.imageHeight = data.imageHeight
+            previewUrlCacheEntity.imageWidth = data.imageWidth
             previewUrlCacheEntity.lastUpdatedTimestamp = Date().time
         }
 

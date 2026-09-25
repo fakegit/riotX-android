@@ -15,15 +15,16 @@
  */
 package org.matrix.android.sdk.internal.crypto.api
 
+import org.matrix.android.sdk.api.session.crypto.model.DeviceInfo
+import org.matrix.android.sdk.api.session.crypto.model.DevicesListResponse
+import org.matrix.android.sdk.api.util.JsonDict
 import org.matrix.android.sdk.internal.crypto.model.rest.DeleteDeviceParams
-import org.matrix.android.sdk.internal.crypto.model.rest.DeviceInfo
-import org.matrix.android.sdk.internal.crypto.model.rest.DevicesListResponse
+import org.matrix.android.sdk.internal.crypto.model.rest.DeleteDevicesParams
 import org.matrix.android.sdk.internal.crypto.model.rest.KeyChangesResponse
 import org.matrix.android.sdk.internal.crypto.model.rest.KeysClaimBody
 import org.matrix.android.sdk.internal.crypto.model.rest.KeysClaimResponse
 import org.matrix.android.sdk.internal.crypto.model.rest.KeysQueryBody
 import org.matrix.android.sdk.internal.crypto.model.rest.KeysQueryResponse
-import org.matrix.android.sdk.internal.crypto.model.rest.KeysUploadBody
 import org.matrix.android.sdk.internal.crypto.model.rest.KeysUploadResponse
 import org.matrix.android.sdk.internal.crypto.model.rest.SendToDeviceBody
 import org.matrix.android.sdk.internal.crypto.model.rest.SignatureUploadResponse
@@ -55,13 +56,11 @@ internal interface CryptoApi {
     suspend fun getDeviceInfo(@Path("deviceId") deviceId: String): DeviceInfo
 
     /**
-     * Upload device and/or one-time keys.
-     * Doc: https://matrix.org/docs/spec/client_server/r0.4.0.html#post-matrix-client-r0-keys-upload
-     *
+     * Upload device and one-time keys.
      * @param body the keys to be sent.
      */
     @POST(NetworkConstants.URI_API_PREFIX_PATH_R0 + "keys/upload")
-    suspend fun uploadKeys(@Body body: KeysUploadBody): KeysUploadResponse
+    suspend fun uploadKeys(@Body body: JsonDict): KeysUploadResponse
 
     /**
      * Download device keys.
@@ -103,7 +102,7 @@ internal interface CryptoApi {
      * Claim one-time keys.
      * Doc: https://matrix.org/docs/spec/client_server/r0.4.0.html#post-matrix-client-r0-keys-claim
      *
-     * @param params the params.
+     * @param body the Json body.
      */
     @POST(NetworkConstants.URI_API_PREFIX_PATH_R0 + "keys/claim")
     suspend fun claimOneTimeKeysForUsersDevices(@Body body: KeysClaimBody): KeysClaimResponse
@@ -112,36 +111,53 @@ internal interface CryptoApi {
      * Send an event to a specific list of devices
      * Doc: https://matrix.org/docs/spec/client_server/r0.4.0.html#put-matrix-client-r0-sendtodevice-eventtype-txnid
      *
-     * @param eventType     the type of event to send
+     * @param eventType the type of event to send
      * @param transactionId the transaction ID for this event
-     * @param body          the body
+     * @param body the body
      */
     @PUT(NetworkConstants.URI_API_PREFIX_PATH_R0 + "sendToDevice/{eventType}/{txnId}")
-    suspend fun sendToDevice(@Path("eventType") eventType: String,
-                             @Path("txnId") transactionId: String,
-                             @Body body: SendToDeviceBody)
+    suspend fun sendToDevice(
+            @Path("eventType") eventType: String,
+            @Path("txnId") transactionId: String,
+            @Body body: SendToDeviceBody
+    )
 
     /**
      * Delete a device.
      * Doc: https://matrix.org/docs/spec/client_server/r0.4.0.html#delete-matrix-client-r0-devices-deviceid
      *
      * @param deviceId the device id
-     * @param params   the deletion parameters
+     * @param params the deletion parameters
      */
     @HTTP(path = NetworkConstants.URI_API_PREFIX_PATH_R0 + "devices/{device_id}", method = "DELETE", hasBody = true)
-    suspend fun deleteDevice(@Path("device_id") deviceId: String,
-                             @Body params: DeleteDeviceParams)
+    suspend fun deleteDevice(
+            @Path("device_id") deviceId: String,
+            @Body params: DeleteDeviceParams
+    )
+
+    /**
+     * Deletes the given devices, and invalidates any access token associated with them.
+     * Doc: https://spec.matrix.org/v1.4/client-server-api/#post_matrixclientv3delete_devices
+     *
+     * @param params the deletion parameters
+     */
+    @POST(NetworkConstants.URI_API_PREFIX_PATH_V3 + "delete_devices")
+    suspend fun deleteDevices(
+            @Body params: DeleteDevicesParams
+    )
 
     /**
      * Update the device information.
      * Doc: https://matrix.org/docs/spec/client_server/r0.4.0.html#put-matrix-client-r0-devices-deviceid
      *
      * @param deviceId the device id
-     * @param params   the params
+     * @param params the params
      */
     @PUT(NetworkConstants.URI_API_PREFIX_PATH_R0 + "devices/{device_id}")
-    suspend fun updateDeviceInfo(@Path("device_id") deviceId: String,
-                                 @Body params: UpdateDeviceInfoBody)
+    suspend fun updateDeviceInfo(
+            @Path("device_id") deviceId: String,
+            @Body params: UpdateDeviceInfoBody
+    )
 
     /**
      * Get the update devices list from two sync token.
@@ -151,6 +167,8 @@ internal interface CryptoApi {
      * @param newToken the up-to token.
      */
     @GET(NetworkConstants.URI_API_PREFIX_PATH_R0 + "keys/changes")
-    suspend fun getKeyChanges(@Query("from") oldToken: String,
-                              @Query("to") newToken: String): KeyChangesResponse
+    suspend fun getKeyChanges(
+            @Query("from") oldToken: String,
+            @Query("to") newToken: String
+    ): KeyChangesResponse
 }

@@ -22,8 +22,14 @@ import io.realm.RealmObject
  * This class is used to get notification on new events being inserted. It's to avoid realm getting slow when listening to insert
  * in EventEntity table.
  */
-internal open class EventInsertEntity(var eventId: String = "",
-                                      var eventType: String = ""
+internal open class EventInsertEntity(
+        var eventId: String = "",
+        var eventType: String = "",
+        /**
+         * This flag will be used to filter EventInsertEntity in EventInsertLiveObserver.
+         * Currently it's set to false after an event with encrypted content has been processed.
+         */
+        var canBeProcessed: Boolean = true
 ) : RealmObject() {
 
     private var insertTypeStr: String = EventInsertType.INCREMENTAL_SYNC.name

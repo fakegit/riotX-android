@@ -1,60 +1,52 @@
 /*
- * Copyright (c) 2021 New Vector Ltd
+ * Copyright 2021-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.devtools
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.os.Bundle
 import android.os.Parcelable
 import android.view.Menu
 import android.view.MenuItem
-import androidx.appcompat.app.AlertDialog
-import androidx.core.view.forEach
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import com.airbnb.mvrx.Fail
 import com.airbnb.mvrx.Loading
-import com.airbnb.mvrx.MvRx
+import com.airbnb.mvrx.Mavericks
 import com.airbnb.mvrx.Success
 import com.airbnb.mvrx.Uninitialized
 import com.airbnb.mvrx.viewModel
 import com.airbnb.mvrx.withState
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
-import im.vector.app.core.extensions.exhaustive
 import im.vector.app.core.extensions.replaceFragment
-import im.vector.app.core.extensions.toMvRxBundle
 import im.vector.app.core.platform.SimpleFragmentActivity
+import im.vector.app.core.platform.VectorMenuProvider
 import im.vector.app.core.resources.ColorProvider
 import im.vector.app.core.utils.createJSonViewerStyleProvider
+import im.vector.lib.strings.CommonStrings
 import kotlinx.parcelize.Parcelize
 import org.billcarsonfr.jsonviewer.JSonViewerFragment
 import javax.inject.Inject
 
-class RoomDevToolActivity : SimpleFragmentActivity(), RoomDevToolViewModel.Factory,
-        FragmentManager.OnBackStackChangedListener {
+@AndroidEntryPoint
+class RoomDevToolActivity :
+        SimpleFragmentActivity(),
+        FragmentManager.OnBackStackChangedListener,
+        VectorMenuProvider {
 
-    @Inject lateinit var viewModelFactory: RoomDevToolViewModel.Factory
     @Inject lateinit var colorProvider: ColorProvider
 
     //    private lateinit var viewModel: RoomDevToolViewModel
     private val viewModel: RoomDevToolViewModel by viewModel()
 
-    override fun getTitleRes() = R.string.dev_tools_menu_name
+    override fun getTitleRes() = CommonStrings.dev_tools_menu_name
 
     override fun getMenuRes() = R.menu.menu_devtools
 
@@ -65,33 +57,24 @@ class RoomDevToolActivity : SimpleFragmentActivity(), RoomDevToolViewModel.Facto
             val roomId: String
     ) : Parcelable
 
-    override fun injectWith(injector: ScreenComponent) {
-        super.injectWith(injector)
-        injector.inject(this)
-    }
-
-    override fun create(initialState: RoomDevToolViewState): RoomDevToolViewModel {
-        return viewModelFactory.create(initialState)
-    }
-
     override fun initUiAndData() {
         super.initUiAndData()
-        viewModel.subscribe(this) {
+        viewModel.onEach {
             renderState(it)
         }
 
         viewModel.observeViewEvents {
             when (it) {
-                DevToolsViewEvents.Dismiss             -> finish()
+                DevToolsViewEvents.Dismiss -> finish()
                 is DevToolsViewEvents.ShowAlertMessage -> {
-                    AlertDialog.Builder(this)
+                    MaterialAlertDialogBuilder(this)
                             .setMessage(it.message)
-                            .setPositiveButton(R.string.ok, null)
+                            .setPositiveButton(CommonStrings.ok, null)
                             .show()
                     Unit
                 }
                 is DevToolsViewEvents.ShowSnackMessage -> showSnackbar(it.message)
-            }.exhaustive
+            }
         }
         supportFragmentManager.addOnBackStackChangedListener(this)
     }
@@ -99,16 +82,16 @@ class RoomDevToolActivity : SimpleFragmentActivity(), RoomDevToolViewModel.Facto
     private fun renderState(it: RoomDevToolViewState) {
         if (it.displayMode != currentDisplayMode) {
             when (it.displayMode) {
-                RoomDevToolViewState.Mode.Root                 -> {
+                RoomDevToolViewState.Mode.Root -> {
                     val classJava = RoomDevToolFragment::class.java
                     val tag = classJava.name
                     if (supportFragmentManager.findFragmentByTag(tag) == null) {
-                        replaceFragment(R.id.container, RoomDevToolFragment::class.java)
+                        replaceFragment(views.container, RoomDevToolFragment::class.java)
                     } else {
                         supportFragmentManager.popBackStack()
                     }
                 }
-                RoomDevToolViewState.Mode.StateEventDetail     -> {
+                RoomDevToolViewState.Mode.StateEventDetail -> {
                     val frag = JSonViewerFragment.newInstance(
                             jsonString = it.selectedEventJson ?: "",
                             initialOpenDepth = -1,
@@ -119,15 +102,15 @@ class RoomDevToolActivity : SimpleFragmentActivity(), RoomDevToolViewModel.Facto
                 }
                 RoomDevToolViewState.Mode.StateEventList,
                 RoomDevToolViewState.Mode.StateEventListByType -> {
-                    val frag = createFragment(RoomDevToolStateEventListFragment::class.java, Bundle().toMvRxBundle())
+                    val frag = RoomDevToolStateEventListFragment()
                     navigateTo(frag)
                 }
-                RoomDevToolViewState.Mode.EditEventContent     -> {
-                    val frag = createFragment(RoomDevToolEditFragment::class.java, Bundle().toMvRxBundle())
+                RoomDevToolViewState.Mode.EditEventContent -> {
+                    val frag = RoomDevToolEditFragment()
                     navigateTo(frag)
                 }
-                is RoomDevToolViewState.Mode.SendEventForm     -> {
-                    val frag = createFragment(RoomDevToolSendFormFragment::class.java, Bundle().toMvRxBundle())
+                is RoomDevToolViewState.Mode.SendEventForm -> {
+                    val frag = RoomDevToolSendFormFragment()
                     navigateTo(frag)
                 }
             }
@@ -136,9 +119,9 @@ class RoomDevToolActivity : SimpleFragmentActivity(), RoomDevToolViewModel.Facto
         }
 
         when (it.modalLoading) {
-            is Loading    -> showWaitingView()
-            is Success    -> hideWaitingView()
-            is Fail       -> {
+            is Loading -> showWaitingView()
+            is Success -> hideWaitingView()
+            is Fail -> {
                 hideWaitingView()
             }
             Uninitialized -> {
@@ -146,22 +129,22 @@ class RoomDevToolActivity : SimpleFragmentActivity(), RoomDevToolViewModel.Facto
         }
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == android.R.id.home) {
-            onBackPressed()
-            return true
+    override fun handleMenuItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.menuItemEdit -> {
+                viewModel.handle(RoomDevToolAction.MenuEdit)
+                true
+            }
+            R.id.menuItemSend -> {
+                viewModel.handle(RoomDevToolAction.MenuItemSend)
+                true
+            }
+            else -> false
         }
-        if (item.itemId == R.id.menuItemEdit) {
-            viewModel.handle(RoomDevToolAction.MenuEdit)
-            return true
-        }
-        if (item.itemId == R.id.menuItemSend) {
-            viewModel.handle(RoomDevToolAction.MenuItemSend)
-            return true
-        }
-        return super.onOptionsItemSelected(item)
     }
 
+    @SuppressLint("MissingSuperCall")
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
         viewModel.handle(RoomDevToolAction.OnBackPressed)
     }
@@ -171,14 +154,14 @@ class RoomDevToolActivity : SimpleFragmentActivity(), RoomDevToolViewModel.Facto
         if (supportFragmentManager.findFragmentByTag(tag) == null) {
             supportFragmentManager.beginTransaction()
                     .setCustomAnimations(R.anim.fade_in, R.anim.fade_out, R.anim.fade_in, R.anim.fade_out)
-                    .replace(R.id.container, fragment, tag)
+                    .replace(views.container.id, fragment, tag)
                     .addToBackStack(tag)
                     .commit()
         } else {
             if (!supportFragmentManager.popBackStackImmediate(tag, 0)) {
                 supportFragmentManager.beginTransaction()
                         .setCustomAnimations(R.anim.fade_in, R.anim.fade_out, R.anim.fade_in, R.anim.fade_out)
-                        .replace(R.id.container, fragment, tag)
+                        .replace(views.container.id, fragment, tag)
                         .addToBackStack(tag)
                         .commit()
             }
@@ -191,28 +174,19 @@ class RoomDevToolActivity : SimpleFragmentActivity(), RoomDevToolViewModel.Facto
         super.onDestroy()
     }
 
-    override fun onPrepareOptionsMenu(menu: Menu?): Boolean = withState(viewModel) { state ->
-        menu?.forEach {
-            val isVisible = when (it.itemId) {
-                R.id.menuItemEdit -> {
-                    state.displayMode is RoomDevToolViewState.Mode.StateEventDetail
-                }
-                R.id.menuItemSend -> {
-                    state.displayMode is RoomDevToolViewState.Mode.EditEventContent
-                            || state.displayMode is RoomDevToolViewState.Mode.SendEventForm
-                }
-                else              -> true
-            }
-            it.isVisible = isVisible
+    override fun handlePrepareMenu(menu: Menu) {
+        withState(viewModel) { state ->
+            menu.findItem(R.id.menuItemEdit).isVisible = state.displayMode == RoomDevToolViewState.Mode.StateEventDetail
+            menu.findItem(R.id.menuItemSend).isVisible = state.displayMode == RoomDevToolViewState.Mode.EditEventContent ||
+                    state.displayMode is RoomDevToolViewState.Mode.SendEventForm
         }
-        return@withState true
     }
 
     companion object {
 
         fun intent(context: Context, roomId: String): Intent {
             return Intent(context, RoomDevToolActivity::class.java).apply {
-                putExtra(MvRx.KEY_ARG, Args(roomId))
+                putExtra(Mavericks.KEY_ARG, Args(roomId))
             }
         }
     }
@@ -223,25 +197,25 @@ class RoomDevToolActivity : SimpleFragmentActivity(), RoomDevToolViewModel.Facto
 
     private fun updateToolBar(state: RoomDevToolViewState) {
         val title = when (state.displayMode) {
-            RoomDevToolViewState.Mode.Root                 -> {
+            RoomDevToolViewState.Mode.Root -> {
                 getString(getTitleRes())
             }
-            RoomDevToolViewState.Mode.StateEventList       -> {
-                getString(R.string.dev_tools_state_event)
+            RoomDevToolViewState.Mode.StateEventList -> {
+                getString(CommonStrings.dev_tools_state_event)
             }
-            RoomDevToolViewState.Mode.StateEventDetail     -> {
+            RoomDevToolViewState.Mode.StateEventDetail -> {
                 state.selectedEvent?.type
             }
-            RoomDevToolViewState.Mode.EditEventContent     -> {
-                getString(R.string.dev_tools_edit_content)
+            RoomDevToolViewState.Mode.EditEventContent -> {
+                getString(CommonStrings.dev_tools_edit_content)
             }
             RoomDevToolViewState.Mode.StateEventListByType -> {
                 state.currentStateType ?: ""
             }
-            is RoomDevToolViewState.Mode.SendEventForm     -> {
+            is RoomDevToolViewState.Mode.SendEventForm -> {
                 getString(
-                        if (state.displayMode.isState) R.string.dev_tools_send_custom_state_event
-                        else R.string.dev_tools_send_custom_event
+                        if (state.displayMode.isState) CommonStrings.dev_tools_send_custom_state_event
+                        else CommonStrings.dev_tools_send_custom_event
                 )
             }
         }

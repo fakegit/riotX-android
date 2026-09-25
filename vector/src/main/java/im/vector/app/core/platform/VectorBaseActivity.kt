@@ -1,72 +1,76 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.core.platform
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
-import android.content.res.Configuration
-import android.os.Build
 import android.os.Bundle
 import android.view.Menu
+import android.view.MenuInflater
 import android.view.MenuItem
 import android.view.View
-import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.TextView
-import androidx.annotation.AttrRes
+import androidx.activity.enableEdgeToEdge
 import androidx.annotation.CallSuper
 import androidx.annotation.MainThread
-import androidx.annotation.MenuRes
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.Toolbar
 import androidx.coordinatorlayout.widget.CoordinatorLayout
-import androidx.core.content.ContextCompat
+import androidx.core.app.MultiWindowModeChangedInfo
+import androidx.core.util.Consumer
+import androidx.core.view.MenuProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.ViewGroupCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
-import androidx.fragment.app.Fragment
-import androidx.fragment.app.FragmentFactory
+import androidx.core.view.updatePadding
 import androidx.fragment.app.FragmentManager
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.preference.PreferenceManager
 import androidx.viewbinding.ViewBinding
+import com.airbnb.mvrx.MavericksView
 import com.bumptech.glide.util.Util
+import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.color.MaterialColors
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
-import com.jakewharton.rxbinding3.view.clicks
-import im.vector.app.BuildConfig
+import dagger.hilt.android.EntryPointAccessors
 import im.vector.app.R
+import im.vector.app.core.debug.DebugReceiver
 import im.vector.app.core.di.ActiveSessionHolder
-import im.vector.app.core.di.DaggerScreenComponent
-import im.vector.app.core.di.HasScreenInjector
-import im.vector.app.core.di.HasVectorInjector
-import im.vector.app.core.di.ScreenComponent
-import im.vector.app.core.di.VectorComponent
+import im.vector.app.core.di.ActivityEntryPoint
 import im.vector.app.core.dialogs.DialogLocker
 import im.vector.app.core.dialogs.UnrecognizedCertificateDialog
-import im.vector.app.core.extensions.exhaustive
+import im.vector.app.core.error.ErrorFormatter
+import im.vector.app.core.error.fatalError
 import im.vector.app.core.extensions.observeEvent
 import im.vector.app.core.extensions.observeNotNull
 import im.vector.app.core.extensions.registerStartForActivityResult
 import im.vector.app.core.extensions.restart
 import im.vector.app.core.extensions.setTextOrHide
-import im.vector.app.core.extensions.vectorComponent
+import im.vector.app.core.extensions.singletonEntryPoint
+import im.vector.app.core.resources.BuildMeta
+import im.vector.app.core.utils.AndroidSystemSettingsProvider
+import im.vector.app.core.utils.ToolbarConfig
 import im.vector.app.core.utils.toast
 import im.vector.app.features.MainActivity
 import im.vector.app.features.MainActivityArgs
+import im.vector.app.features.VectorFeatures
+import im.vector.app.features.analytics.AnalyticsTracker
+import im.vector.app.features.analytics.plan.MobileScreen
 import im.vector.app.features.configuration.VectorConfiguration
 import im.vector.app.features.consent.ConsentNotGivenHelper
+import im.vector.app.features.mdm.MdmService
 import im.vector.app.features.navigation.Navigator
 import im.vector.app.features.pin.PinLocker
 import im.vector.app.features.pin.PinMode
@@ -75,22 +79,33 @@ import im.vector.app.features.rageshake.BugReportActivity
 import im.vector.app.features.rageshake.BugReporter
 import im.vector.app.features.rageshake.RageShake
 import im.vector.app.features.session.SessionListener
-import im.vector.app.features.settings.FontScale
+import im.vector.app.features.settings.FontScalePreferences
+import im.vector.app.features.settings.FontScalePreferencesImpl
+import im.vector.app.features.settings.VectorLocaleProvider
 import im.vector.app.features.settings.VectorPreferences
 import im.vector.app.features.themes.ActivityOtherThemes
 import im.vector.app.features.themes.ThemeUtils
-import im.vector.app.receivers.DebugReceiver
-import io.reactivex.android.schedulers.AndroidSchedulers
-import io.reactivex.disposables.CompositeDisposable
-import io.reactivex.disposables.Disposable
-
+import im.vector.lib.strings.CommonStrings
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import org.matrix.android.sdk.api.extensions.orFalse
 import org.matrix.android.sdk.api.extensions.tryOrNull
 import org.matrix.android.sdk.api.failure.GlobalError
+import org.matrix.android.sdk.api.failure.InitialSyncRequestReason
+import reactivecircus.flowbinding.android.view.clicks
 import timber.log.Timber
-import java.util.concurrent.TimeUnit
-import kotlin.system.measureTimeMillis
+import javax.inject.Inject
 
-abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScreenInjector {
+abstract class VectorBaseActivity<VB : ViewBinding> : AppCompatActivity(), MavericksView {
+    /* ==========================================================================================
+     * Analytics
+     * ========================================================================================== */
+
+    protected var analyticsScreenName: MobileScreen.ScreenName? = null
+
+    @Inject lateinit var analyticsTracker: AnalyticsTracker
+
     /* ==========================================================================================
      * View
      * ========================================================================================== */
@@ -106,16 +121,23 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
     protected val viewModelProvider
         get() = ViewModelProvider(this, viewModelFactory)
 
-    protected fun <T : VectorViewEvents> VectorViewModel<*, *, T>.observeViewEvents(observer: (T) -> Unit) {
-        viewEvents
-                .observe()
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe {
-                    hideWaitingView()
-                    observer(it)
-                }
-                .disposeOnDestroy()
+    fun <T : VectorViewEvents> VectorViewModel<*, *, T>.observeViewEvents(
+            observer: (T) -> Unit,
+    ) {
+        val tag = this@VectorBaseActivity::class.simpleName.toString()
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                viewEvents
+                        .stream(tag)
+                        .collect {
+                            hideWaitingView()
+                            observer(it)
+                        }
+            }
+        }
     }
+
+    var toolbar: ToolbarConfig? = null
 
     /* ==========================================================================================
      * Views
@@ -123,10 +145,8 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
 
     protected fun View.debouncedClicks(onClicked: () -> Unit) {
         clicks()
-                .throttleFirst(300, TimeUnit.MILLISECONDS)
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe { onClicked() }
-                .disposeOnDestroy()
+                .onEach { onClicked() }
+                .launchIn(lifecycleScope)
     }
 
     /* ==========================================================================================
@@ -134,33 +154,36 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
      * ========================================================================================== */
 
     private lateinit var configurationViewModel: ConfigurationViewModel
-    private lateinit var sessionListener: SessionListener
-    protected lateinit var bugReporter: BugReporter
-    private lateinit var pinLocker: PinLocker
-    lateinit var rageShake: RageShake
 
-    lateinit var navigator: Navigator
-        private set
-    private lateinit var fragmentFactory: FragmentFactory
+    @Inject lateinit var sessionListener: SessionListener
+    @Inject lateinit var bugReporter: BugReporter
+    @Inject lateinit var pinLocker: PinLocker
+    @Inject lateinit var rageShake: RageShake
+    @Inject lateinit var buildMeta: BuildMeta
+    @Inject lateinit var fontScalePreferences: FontScalePreferences
+    @Inject lateinit var vectorLocale: VectorLocaleProvider
+    @Inject lateinit var vectorFeatures: VectorFeatures
+    @Inject lateinit var navigator: Navigator
+    @Inject lateinit var activeSessionHolder: ActiveSessionHolder
+    @Inject lateinit var vectorPreferences: VectorPreferences
+    @Inject lateinit var errorFormatter: ErrorFormatter
+    @Inject lateinit var mdmService: MdmService
 
-    private lateinit var activeSessionHolder: ActiveSessionHolder
-    private lateinit var vectorPreferences: VectorPreferences
+    // For debug only
+    @Inject lateinit var debugReceiver: DebugReceiver
 
     // Filter for multiple invalid token error
     private var mainActivityStarted = false
 
     private var savedInstanceState: Bundle? = null
 
-    // For debug only
-    private var debugReceiver: DebugReceiver? = null
-
-    private val uiDisposables = CompositeDisposable()
     private val restorables = ArrayList<Restorable>()
 
-    private lateinit var screenComponent: ScreenComponent
-
     override fun attachBaseContext(base: Context) {
-        val vectorConfiguration = VectorConfiguration(this)
+        val preferences = PreferenceManager.getDefaultSharedPreferences(base)
+        val fontScalePreferences = FontScalePreferencesImpl(preferences, AndroidSystemSettingsProvider(base))
+        val vectorLocaleProvider = VectorLocaleProvider(preferences)
+        val vectorConfiguration = VectorConfiguration(this, fontScalePreferences, vectorLocaleProvider)
         super.attachBaseContext(vectorConfiguration.getLocalisedContext(base))
     }
 
@@ -181,32 +204,18 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
         return this
     }
 
-    protected fun Disposable.disposeOnDestroy() {
-        uiDisposables.add(this)
-    }
-
     @CallSuper
     override fun onCreate(savedInstanceState: Bundle?) {
         Timber.i("onCreate Activity ${javaClass.simpleName}")
-        val vectorComponent = getVectorComponent()
-        screenComponent = DaggerScreenComponent.factory().create(vectorComponent, this)
-        val timeForInjection = measureTimeMillis {
-            injectWith(screenComponent)
-        }
-        Timber.v("Injecting dependencies into ${javaClass.simpleName} took $timeForInjection ms")
+        val activityEntryPoint = EntryPointAccessors.fromActivity(this, ActivityEntryPoint::class.java)
         ThemeUtils.setActivityTheme(this, getOtherThemes())
-        fragmentFactory = screenComponent.fragmentFactory()
-        supportFragmentManager.fragmentFactory = fragmentFactory
+        viewModelFactory = activityEntryPoint.viewModelFactory()
+        enableEdgeToEdge()
+        ViewGroupCompat.installCompatInsetsDispatch(window.decorView)
         super.onCreate(savedInstanceState)
-        viewModelFactory = screenComponent.viewModelFactory()
+        addOnMultiWindowModeChangedListener(onMultiWindowModeChangedListener)
+        setupMenu()
         configurationViewModel = viewModelProvider.get(ConfigurationViewModel::class.java)
-        bugReporter = screenComponent.bugReporter()
-        pinLocker = screenComponent.pinLocker()
-        // Shake detector
-        rageShake = screenComponent.rageShake()
-        navigator = screenComponent.navigator()
-        activeSessionHolder = screenComponent.activeSessionHolder()
-        vectorPreferences = vectorComponent.vectorPreferences()
         configurationViewModel.activityRestarter.observe(this) {
             if (!it.hasBeenHandled) {
                 // Recreate the Activity because configuration has changed
@@ -218,7 +227,6 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
                 navigator.openPinCode(this, pinStartForActivityResult, PinMode.AUTH)
             }
         }
-        sessionListener = vectorComponent.sessionListener()
         sessionListener.globalErrorLiveData.observeEvent(this) {
             handleGlobalError(it)
         }
@@ -240,6 +248,16 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
 
         initUiAndData()
 
+        if (vectorPreferences.isNewAppLayoutEnabled()) {
+            tryOrNull { // Add to XML theme when feature flag is removed
+                val toolbarBackground = MaterialColors.getColor(views.root, im.vector.lib.ui.styles.R.attr.vctr_toolbar_background)
+                @Suppress("DEPRECATION")
+                window.statusBarColor = toolbarBackground
+                @Suppress("DEPRECATION")
+                window.navigationBarColor = toolbarBackground
+            }
+        }
+
         val titleRes = getTitleRes()
         if (titleRes != -1) {
             supportActionBar?.let {
@@ -250,11 +268,37 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
         }
     }
 
+    private fun setupMenu() {
+        // Always add a MenuProvider to handle the back action from the Toolbar
+        val vectorMenuProvider = this as? VectorMenuProvider
+        addMenuProvider(
+                object : MenuProvider {
+                    override fun onCreateMenu(menu: Menu, menuInflater: MenuInflater) {
+                        vectorMenuProvider?.let {
+                            menuInflater.inflate(it.getMenuRes(), menu)
+                            it.handlePostCreateMenu(menu)
+                        }
+                    }
+
+                    override fun onPrepareMenu(menu: Menu) {
+                        vectorMenuProvider?.handlePrepareMenu(menu)
+                    }
+
+                    override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
+                        return vectorMenuProvider?.handleMenuItemSelected(menuItem).orFalse() ||
+                                handleMenuItemHome(menuItem)
+                    }
+                },
+                this,
+                Lifecycle.State.RESUMED
+        )
+    }
+
     /**
      * This method has to be called for the font size setting be supported correctly.
      */
     private fun applyFontSize() {
-        resources.configuration.fontScale = FontScale.getFontScaleValue(this).scale
+        resources.configuration.fontScale = fontScalePreferences.getResolvedFontScaleValue().scale
 
         @Suppress("DEPRECATION")
         resources.updateConfiguration(resources.configuration, resources.displayMetrics)
@@ -262,20 +306,42 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
 
     private fun handleGlobalError(globalError: GlobalError) {
         when (globalError) {
-            is GlobalError.InvalidToken         ->
-                handleInvalidToken(globalError)
-            is GlobalError.ConsentNotGivenError ->
-                consentNotGivenHelper.displayDialog(globalError.consentUri,
-                        activeSessionHolder.getActiveSession().sessionParams.homeServerHost ?: "")
-            is GlobalError.CertificateError     ->
-                handleCertificateError(globalError)
-        }.exhaustive
+            is GlobalError.InvalidToken -> handleInvalidToken(globalError)
+            is GlobalError.ConsentNotGivenError -> displayConsentNotGivenDialog(globalError)
+            is GlobalError.CertificateError -> handleCertificateError(globalError)
+            GlobalError.ExpiredAccount -> Unit // TODO Handle account expiration
+            is GlobalError.InitialSyncRequest -> handleInitialSyncRequest(globalError)
+        }
+    }
+
+    private fun displayConsentNotGivenDialog(globalError: GlobalError.ConsentNotGivenError) {
+        consentNotGivenHelper.displayDialog(globalError.consentUri, activeSessionHolder.getActiveSession().sessionParams.homeServerHost ?: "")
+    }
+
+    private fun handleInitialSyncRequest(initialSyncRequest: GlobalError.InitialSyncRequest) {
+        MaterialAlertDialogBuilder(this)
+                .setTitle(CommonStrings.initial_sync_request_title)
+                .setMessage(
+                        getString(
+                                CommonStrings.initial_sync_request_content, getString(
+                                when (initialSyncRequest.reason) {
+                                    InitialSyncRequestReason.IGNORED_USERS_LIST_CHANGE -> CommonStrings.initial_sync_request_reason_unignored_users
+                                }
+                        )
+                        )
+                )
+                .setPositiveButton(CommonStrings.ok) { _, _ ->
+                    MainActivity.restartApp(this, MainActivityArgs(clearCache = true))
+                }
+                .setNegativeButton(CommonStrings.later, null)
+                .show()
     }
 
     private fun handleCertificateError(certificateError: GlobalError.CertificateError) {
-        vectorComponent()
+        singletonEntryPoint()
                 .unrecognizedCertificateDialog()
-                .show(this,
+                .show(
+                        this,
                         certificateError.fingerprint,
                         object : UnrecognizedCertificateDialog.Callback {
                             override fun onAccept() {
@@ -301,7 +367,8 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
 
         mainActivityStarted = true
 
-        MainActivity.restartApp(this,
+        MainActivity.restartApp(
+                this,
                 MainActivityArgs(
                         clearCredentials = !globalError.softLogout,
                         isUserLoggedOut = true,
@@ -311,10 +378,9 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
     }
 
     override fun onDestroy() {
+        removeOnMultiWindowModeChangedListener(onMultiWindowModeChangedListener)
         super.onDestroy()
         Timber.i("onDestroy Activity ${javaClass.simpleName}")
-
-        uiDisposables.dispose()
     }
 
     private val pinStartForActivityResult = registerStartForActivityResult { activityResult ->
@@ -327,7 +393,7 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
                 // FIXME I cannot use this anymore :/
                 // finishActivity(PinActivity.PIN_REQUEST_CODE)
             }
-            else               -> {
+            else -> {
                 if (pinLocker.getLiveState().value != PinLocker.State.UNLOCKED) {
                     // Remove the task, to be sure that PIN code will be requested when resumed
                     finishAndRemoveTask()
@@ -339,26 +405,41 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
     override fun onResume() {
         super.onResume()
         Timber.i("onResume Activity ${javaClass.simpleName}")
-
+        analyticsScreenName?.let {
+            analyticsTracker.screen(MobileScreen(screenName = it))
+        }
         configurationViewModel.onActivityResumed()
 
         if (this !is BugReportActivity && vectorPreferences.useRageshake()) {
             rageShake.start()
         }
-        DebugReceiver
-                .getIntentFilter(this)
-                .takeIf { BuildConfig.DEBUG }
-                ?.let {
-                    debugReceiver = DebugReceiver()
-                    registerReceiver(debugReceiver, it)
-                }
+        debugReceiver.register(this)
+        mdmService.registerListener(this) {
+            // Just log that a change occurred.
+            Timber.w("MDM data has been updated")
+        }
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { v, insets ->
+            val systemBars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or
+                            WindowInsetsCompat.Type.displayCutout() or
+                            WindowInsetsCompat.Type.ime()
+            )
+            v.updatePadding(
+                    systemBars.left,
+                    systemBars.top,
+                    systemBars.right,
+                    systemBars.bottom,
+            )
+            WindowInsetsCompat.CONSUMED
+        }
     }
 
     private val postResumeScheduledActions = mutableListOf<() -> Unit>()
 
     /**
-     * Schedule action to be done in the next call of onPostResume()
-     * It fixes bug observed on Android 6 (API 23)
+     * Schedule action to be done in the next call of onPostResume().
+     * It fixes bug observed on Android 6 (API 23).
      */
     protected fun doOnPostResume(action: () -> Unit) {
         synchronized(postResumeScheduledActions) {
@@ -381,97 +462,31 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
         Timber.i("onPause Activity ${javaClass.simpleName}")
 
         rageShake.stop()
-
-        debugReceiver?.let {
-            unregisterReceiver(debugReceiver)
-            debugReceiver = null
-        }
+        debugReceiver.unregister(this)
+        mdmService.unregisterListener(this)
     }
 
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-
-        if (hasFocus && displayInFullscreen()) {
-            setFullScreen()
-        }
-    }
-
-    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration?) {
-        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
-
-        Timber.w("onMultiWindowModeChanged. isInMultiWindowMode: $isInMultiWindowMode")
-        bugReporter.inMultiWindowMode = isInMultiWindowMode
-    }
-
-    override fun injector(): ScreenComponent {
-        return screenComponent
-    }
-
-    protected open fun injectWith(injector: ScreenComponent) = Unit
-
-    protected fun createFragment(fragmentClass: Class<out Fragment>, args: Bundle?): Fragment {
-        return fragmentFactory.instantiate(classLoader, fragmentClass.name).apply {
-            arguments = args
-        }
+    private val onMultiWindowModeChangedListener = Consumer<MultiWindowModeChangedInfo> {
+        Timber.w("onMultiWindowModeChanged. isInMultiWindowMode: ${it.isInMultiWindowMode}")
+        bugReporter.inMultiWindowMode = it.isInMultiWindowMode
     }
 
     /* ==========================================================================================
      * PRIVATE METHODS
      * ========================================================================================== */
 
-    internal fun getVectorComponent(): VectorComponent {
-        return (application as HasVectorInjector).injector()
-    }
-
-    /**
-     * Force to render the activity in fullscreen
-     */
-    @Suppress("DEPRECATION")
-    private fun setFullScreen() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // New API instead of SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN and SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-            window.setDecorFitsSystemWindows(false)
-            // New API instead of SYSTEM_UI_FLAG_IMMERSIVE
-            window.decorView.windowInsetsController?.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_BARS_BY_SWIPE
-            // New API instead of FLAG_TRANSLUCENT_STATUS
-            window.statusBarColor = ContextCompat.getColor(this, im.vector.lib.attachmentviewer.R.color.half_transparent_status_bar)
-            // New API instead of FLAG_TRANSLUCENT_NAVIGATION
-            window.navigationBarColor = ContextCompat.getColor(this, im.vector.lib.attachmentviewer.R.color.half_transparent_status_bar)
-        } else {
-            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+    private fun handleMenuItemHome(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            android.R.id.home -> {
+                onBackPressed(true)
+                true
+            }
+            else -> false
         }
     }
 
-    /* ==========================================================================================
-     * MENU MANAGEMENT
-     * ========================================================================================== */
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        val menuRes = getMenuRes()
-
-        if (menuRes != -1) {
-            menuInflater.inflate(menuRes, menu)
-            ThemeUtils.tintMenuIcons(menu, ThemeUtils.getColor(this, getMenuTint()))
-            return true
-        }
-
-        return super.onCreateOptionsMenu(menu)
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == android.R.id.home) {
-            onBackPressed(true)
-            return true
-        }
-
-        return super.onOptionsItemSelected(item)
-    }
-
+    @SuppressLint("MissingSuperCall")
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
         onBackPressed(false)
     }
@@ -479,6 +494,7 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
     private fun onBackPressed(fromToolbar: Boolean) {
         val handled = recursivelyDispatchOnBackPressed(supportFragmentManager, fromToolbar)
         if (!handled) {
+            @Suppress("DEPRECATION")
             super.onBackPressed()
         }
     }
@@ -512,23 +528,11 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
     }
 
     /**
-     * Is first creation
+     * Is first creation.
      *
      * @return true if Activity is created for the first time (and not restored by the system)
      */
     protected fun isFirstCreation() = savedInstanceState == null
-
-    /**
-     * Configure the Toolbar, with default back button.
-     */
-    protected fun configureToolbar(toolbar: Toolbar, displayBack: Boolean = true) {
-        setSupportActionBar(toolbar)
-        supportActionBar?.let {
-            it.setDisplayShowHomeEnabled(displayBack)
-            it.setDisplayHomeAsUpEnabled(displayBack)
-            it.title = null
-        }
-    }
 
     // ==============================================================================================
     // Handle loading view (also called waiting view or spinner view)
@@ -543,7 +547,7 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
         }
 
     /**
-     * Tells if the waiting view is currently displayed
+     * Tells if the waiting view is currently displayed.
      *
      * @return true if the waiting view is displayed
      */
@@ -560,7 +564,7 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
     }
 
     /**
-     * Hide the waiting view
+     * Hide the waiting view.
      */
     open fun hideWaitingView() {
         waitingView?.isVisible = false
@@ -572,23 +576,18 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
 
     abstract fun getBinding(): VB
 
-    open fun displayInFullscreen() = false
-
     open fun doBeforeSetContentView() = Unit
 
     open fun initUiAndData() = Unit
 
+    // Note: does not seem to be called
+    final override fun invalidate() = Unit
+
     @StringRes
     open fun getTitleRes() = -1
 
-    @MenuRes
-    open fun getMenuRes() = -1
-
-    @AttrRes
-    open fun getMenuTint() = R.attr.vctr_icon_tint_on_light_action_bar_color
-
     /**
-     * Return a object containing other themes for this activity
+     * Return a object containing other themes for this activity.
      */
     open fun getOtherThemes(): ActivityOtherThemes = ActivityOtherThemes.Default
 
@@ -601,16 +600,21 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
     }
 
     fun showSnackbar(message: String, @StringRes withActionTitle: Int?, action: (() -> Unit)?) {
-        getCoordinatorLayout()?.let {
-            Snackbar.make(it, message, Snackbar.LENGTH_LONG).apply {
+        val coordinatorLayout = getCoordinatorLayout()
+        if (coordinatorLayout != null) {
+            Snackbar.make(coordinatorLayout, message, Snackbar.LENGTH_LONG).apply {
                 withActionTitle?.let {
-                    setAction(withActionTitle, { action?.invoke() })
+                    setAction(withActionTitle) { action?.invoke() }
                 }
             }.show()
+        } else {
+            fatalError("No CoordinatorLayout to display this snackbar!", vectorPreferences.failFast())
         }
     }
 
     open fun getCoordinatorLayout(): CoordinatorLayout? = null
+
+    abstract val rootView: View
 
     /* ==========================================================================================
      * User Consent
@@ -627,9 +631,18 @@ abstract class VectorBaseActivity<VB: ViewBinding> : AppCompatActivity(), HasScr
 
     fun notImplemented(message: String = "") {
         if (message.isNotBlank()) {
-            toast(getString(R.string.not_implemented) + ": $message")
+            toast(getString(CommonStrings.not_implemented) + ": $message")
         } else {
-            toast(getString(R.string.not_implemented))
+            toast(getString(CommonStrings.not_implemented))
         }
+    }
+
+    /**
+     * Sets toolbar as actionBar.
+     *
+     * @return Instance of [ToolbarConfig] with set of helper methods to configure toolbar
+     * */
+    fun setupToolbar(toolbar: MaterialToolbar) = ToolbarConfig(this, toolbar).also {
+        this.toolbar = it.setup()
     }
 }

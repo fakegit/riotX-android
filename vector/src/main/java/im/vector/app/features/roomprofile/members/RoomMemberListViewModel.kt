@@ -1,79 +1,68 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roomprofile.members
 
-import androidx.lifecycle.viewModelScope
-import com.airbnb.mvrx.FragmentViewModelContext
-import com.airbnb.mvrx.MvRxViewModelFactory
-import com.airbnb.mvrx.ViewModelContext
+import androidx.lifecycle.asFlow
+import com.airbnb.mvrx.MavericksViewModelFactory
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
-import im.vector.app.core.extensions.exhaustive
+import dagger.assisted.AssistedInject
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.EmptyViewEvents
 import im.vector.app.core.platform.VectorViewModel
-import im.vector.app.features.powerlevel.PowerLevelsObservableFactory
-import io.reactivex.Observable
-import io.reactivex.android.schedulers.AndroidSchedulers
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
-import org.matrix.android.sdk.api.crypto.RoomEncryptionTrustLevel
 import org.matrix.android.sdk.api.extensions.orFalse
 import org.matrix.android.sdk.api.query.QueryStringValue
 import org.matrix.android.sdk.api.session.Session
+import org.matrix.android.sdk.api.session.crypto.model.CryptoDeviceInfo
+import org.matrix.android.sdk.api.session.crypto.model.UserVerificationLevel
 import org.matrix.android.sdk.api.session.events.model.EventType
-import org.matrix.android.sdk.api.session.events.model.toModel
+import org.matrix.android.sdk.api.session.getRoom
 import org.matrix.android.sdk.api.session.room.members.roomMemberQueryParams
 import org.matrix.android.sdk.api.session.room.model.Membership
-import org.matrix.android.sdk.api.session.room.model.PowerLevelsContent
 import org.matrix.android.sdk.api.session.room.model.RoomMemberSummary
-import org.matrix.android.sdk.api.session.room.powerlevels.PowerLevelsHelper
 import org.matrix.android.sdk.api.session.room.powerlevels.Role
-import org.matrix.android.sdk.rx.asObservable
-import org.matrix.android.sdk.rx.mapOptional
-import org.matrix.android.sdk.rx.rx
-import org.matrix.android.sdk.rx.unwrap
+import org.matrix.android.sdk.api.session.room.powerlevels.RoomPowerLevels
+import org.matrix.android.sdk.flow.flow
+import org.matrix.android.sdk.flow.unwrap
 import timber.log.Timber
 
-class RoomMemberListViewModel @AssistedInject constructor(@Assisted initialState: RoomMemberListViewState,
-                                                          private val roomMemberSummaryComparator: RoomMemberSummaryComparator,
-                                                          private val session: Session)
-    : VectorViewModel<RoomMemberListViewState, RoomMemberListAction, EmptyViewEvents>(initialState) {
+class RoomMemberListViewModel @AssistedInject constructor(
+        @Assisted initialState: RoomMemberListViewState,
+        private val roomMemberListComparator: RoomMemberListComparator,
+        private val session: Session
+) :
+        VectorViewModel<RoomMemberListViewState, RoomMemberListAction, EmptyViewEvents>(initialState) {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: RoomMemberListViewState): RoomMemberListViewModel
+    interface Factory : MavericksAssistedViewModelFactory<RoomMemberListViewModel, RoomMemberListViewState> {
+        override fun create(initialState: RoomMemberListViewState): RoomMemberListViewModel
     }
 
-    companion object : MvRxViewModelFactory<RoomMemberListViewModel, RoomMemberListViewState> {
-
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: RoomMemberListViewState): RoomMemberListViewModel? {
-            val fragment: RoomMemberListFragment = (viewModelContext as FragmentViewModelContext).fragment()
-            return fragment.viewModelFactory.create(state)
-        }
-    }
+    companion object : MavericksViewModelFactory<RoomMemberListViewModel, RoomMemberListViewState> by hiltMavericksViewModelFactory()
 
     private val room = session.getRoom(initialState.roomId)!!
+    private val roomFlow = room.flow()
 
     init {
         observeRoomMemberSummaries()
         observeThirdPartyInvites()
         observeRoomSummary()
         observePowerLevel()
+        observeIgnoredUsers()
     }
 
     private fun observeRoomMemberSummaries() {
@@ -82,39 +71,38 @@ class RoomMemberListViewModel @AssistedInject constructor(@Assisted initialState
             memberships = Membership.activeMemberships()
         }
 
-        Observable
-                .combineLatest<List<RoomMemberSummary>, PowerLevelsContent, RoomMemberSummaries>(
-                        room.rx().liveRoomMembers(roomMemberQueryParams),
-                        room.rx()
-                                .liveStateEvent(EventType.STATE_ROOM_POWER_LEVELS, QueryStringValue.NoCondition)
-                                .mapOptional { it.content.toModel<PowerLevelsContent>() }
-                                .unwrap(),
-                        { roomMembers, powerLevelsContent ->
-                            buildRoomMemberSummaries(powerLevelsContent, roomMembers)
-                        }
-                )
+        val powerLevelsFlow = room.flow().liveRoomPowerLevels()
+        combine(
+                roomFlow.liveRoomMembers(roomMemberQueryParams),
+                powerLevelsFlow,
+        ) { roomMembers, roomPowerLevels ->
+            buildRoomMemberSummaries(roomPowerLevels, roomMembers)
+        }
                 .execute { async ->
                     copy(roomMemberSummaries = async)
                 }
 
-        if (room.isEncrypted()) {
-            room.rx().liveRoomMembers(roomMemberQueryParams)
-                    .observeOn(AndroidSchedulers.mainThread())
-                    .switchMap { membersSummary ->
+        roomFlow.liveAreAllMembersLoaded()
+                .distinctUntilChanged()
+                .onEach {
+                    setState {
+                        copy(
+                                areAllMembersLoaded = it
+                        )
+                    }
+                }
+                .launchIn(viewModelScope)
+
+        if (room.roomCryptoService().isEncrypted()) {
+            roomFlow.liveRoomMembers(roomMemberQueryParams)
+                    .flatMapLatest { membersSummary ->
                         session.cryptoService().getLiveCryptoDeviceInfo(membersSummary.map { it.userId })
-                                .asObservable()
-                                .doOnError { Timber.e(it) }
+                                .asFlow()
+                                .catch { Timber.e(it) }
                                 .map { deviceList ->
                                     // If any key change, emit the userIds list
                                     deviceList.groupBy { it.userId }.mapValues {
-                                        val allDeviceTrusted = it.value.fold(it.value.isNotEmpty()) { prev, next ->
-                                            prev && next.trustLevel?.isCrossSigningVerified().orFalse()
-                                        }
-                                        if (session.cryptoService().crossSigningService().getUserCrossSigningKeys(it.key)?.isTrusted().orFalse()) {
-                                            if (allDeviceTrusted) RoomEncryptionTrustLevel.Trusted else RoomEncryptionTrustLevel.Warning
-                                        } else {
-                                            RoomEncryptionTrustLevel.Default
-                                        }
+                                        getUserTrustLevel(it.key, it.value)
                                     }
                                 }
                     }
@@ -124,12 +112,35 @@ class RoomMemberListViewModel @AssistedInject constructor(@Assisted initialState
         }
     }
 
+    private suspend fun getUserTrustLevel(userId: String, devices: List<CryptoDeviceInfo>): UserVerificationLevel {
+        val allDeviceTrusted = devices.fold(devices.isNotEmpty()) { prev, next ->
+            prev && next.trustLevel?.isCrossSigningVerified().orFalse()
+        }
+        val mxCrossSigningInfo = session.cryptoService().crossSigningService().getUserCrossSigningKeys(userId)
+        return when {
+            mxCrossSigningInfo == null -> {
+                UserVerificationLevel.WAS_NEVER_VERIFIED
+            }
+            mxCrossSigningInfo.isTrusted() -> {
+                if (allDeviceTrusted) UserVerificationLevel.VERIFIED_ALL_DEVICES_TRUSTED
+                else UserVerificationLevel.VERIFIED_WITH_DEVICES_UNTRUSTED
+            }
+            else -> {
+                if (mxCrossSigningInfo.wasTrustedOnce) {
+                    UserVerificationLevel.UNVERIFIED_BUT_WAS_PREVIOUSLY
+                } else {
+                    UserVerificationLevel.WAS_NEVER_VERIFIED
+                }
+            }
+        }
+    }
+
     private fun observePowerLevel() {
-        PowerLevelsObservableFactory(room).createObservable()
-                .subscribe {
+        room.flow().liveRoomPowerLevels()
+                .onEach { roomPowerLevels ->
                     val permissions = ActionPermissions(
-                            canInvite = PowerLevelsHelper(it).isUserAbleToInvite(session.myUserId),
-                            canRevokeThreePidInvite = PowerLevelsHelper(it).isUserAllowedToSend(
+                            canInvite = roomPowerLevels.isUserAbleToInvite(session.myUserId),
+                            canRevokeThreePidInvite = roomPowerLevels.isUserAllowedToSend(
                                     userId = session.myUserId,
                                     isState = true,
                                     eventType = EventType.STATE_ROOM_THIRD_PARTY_INVITE
@@ -138,11 +149,11 @@ class RoomMemberListViewModel @AssistedInject constructor(@Assisted initialState
                     setState {
                         copy(actionsPermissions = permissions)
                     }
-                }.disposeOnClear()
+                }.launchIn(viewModelScope)
     }
 
     private fun observeRoomSummary() {
-        room.rx().liveRoomSummary()
+        roomFlow.liveRoomSummary()
                 .unwrap()
                 .execute { async ->
                     copy(roomSummary = async)
@@ -150,50 +161,64 @@ class RoomMemberListViewModel @AssistedInject constructor(@Assisted initialState
     }
 
     private fun observeThirdPartyInvites() {
-        room.rx().liveStateEvents(setOf(EventType.STATE_ROOM_THIRD_PARTY_INVITE))
+        roomFlow
+                .liveStateEvents(setOf(EventType.STATE_ROOM_THIRD_PARTY_INVITE), QueryStringValue.IsNotNull)
                 .execute { async ->
                     copy(threePidInvites = async)
                 }
     }
 
-    private fun buildRoomMemberSummaries(powerLevelsContent: PowerLevelsContent, roomMembers: List<RoomMemberSummary>): RoomMemberSummaries {
-        val admins = ArrayList<RoomMemberSummary>()
-        val moderators = ArrayList<RoomMemberSummary>()
-        val users = ArrayList<RoomMemberSummary>(roomMembers.size)
-        val customs = ArrayList<RoomMemberSummary>()
-        val invites = ArrayList<RoomMemberSummary>()
-        val powerLevelsHelper = PowerLevelsHelper(powerLevelsContent)
+    private fun observeIgnoredUsers() {
+        session.flow()
+                .liveIgnoredUsers()
+                .execute { async ->
+                    copy(
+                            ignoredUserIds = async.invoke().orEmpty().map { it.userId }
+                    )
+                }
+    }
+
+    private fun buildRoomMemberSummaries(roomPowerLevels: RoomPowerLevels, roomMembers: List<RoomMemberSummary>): RoomMembersByRole {
+        val admins = ArrayList<RoomMemberWithPowerLevel>()
+        val moderators = ArrayList<RoomMemberWithPowerLevel>()
+        val users = ArrayList<RoomMemberWithPowerLevel>(roomMembers.size)
+        val invites = ArrayList<RoomMemberWithPowerLevel>()
         roomMembers
                 .forEach { roomMember ->
-                    val userRole = powerLevelsHelper.getUserRole(roomMember.userId)
+                    val powerLevel = roomPowerLevels.getUserPowerLevel(roomMember.userId)
+                    val userRole = Role.getSuggestedRole(powerLevel)
+                    val roomMemberWithPowerLevel = RoomMemberWithPowerLevel(
+                            powerLevel = powerLevel,
+                            summary = roomMember,
+                    )
                     when {
-                        roomMember.membership == Membership.INVITE -> invites.add(roomMember)
-                        userRole == Role.Admin                     -> admins.add(roomMember)
-                        userRole == Role.Moderator                 -> moderators.add(roomMember)
-                        userRole == Role.Default                   -> users.add(roomMember)
-                        else                                       -> customs.add(roomMember)
+                        roomMember.membership == Membership.INVITE -> invites.add(roomMemberWithPowerLevel)
+                        userRole == Role.SuperAdmin ||
+                                userRole == Role.Creator ||
+                                userRole == Role.Admin -> admins.add(roomMemberWithPowerLevel)
+                        userRole == Role.Moderator -> moderators.add(roomMemberWithPowerLevel)
+                        userRole == Role.User -> users.add(roomMemberWithPowerLevel)
                     }
                 }
 
         return listOf(
-                RoomMemberListCategories.ADMIN to admins.sortedWith(roomMemberSummaryComparator),
-                RoomMemberListCategories.MODERATOR to moderators.sortedWith(roomMemberSummaryComparator),
-                RoomMemberListCategories.CUSTOM to customs.sortedWith(roomMemberSummaryComparator),
-                RoomMemberListCategories.INVITE to invites.sortedWith(roomMemberSummaryComparator),
-                RoomMemberListCategories.USER to users.sortedWith(roomMemberSummaryComparator)
+                RoomMemberListCategories.ADMIN to admins.sortedWith(roomMemberListComparator),
+                RoomMemberListCategories.MODERATOR to moderators.sortedWith(roomMemberListComparator),
+                RoomMemberListCategories.INVITE to invites.sortedWith(roomMemberListComparator),
+                RoomMemberListCategories.USER to users.sortedWith(roomMemberListComparator)
         )
     }
 
     override fun handle(action: RoomMemberListAction) {
         when (action) {
             is RoomMemberListAction.RevokeThreePidInvite -> handleRevokeThreePidInvite(action)
-            is RoomMemberListAction.FilterMemberList     -> handleFilterMemberList(action)
-        }.exhaustive
+            is RoomMemberListAction.FilterMemberList -> handleFilterMemberList(action)
+        }
     }
 
     private fun handleRevokeThreePidInvite(action: RoomMemberListAction.RevokeThreePidInvite) {
         viewModelScope.launch {
-            room.sendStateEvent(
+            room.stateService().sendStateEvent(
                     eventType = EventType.STATE_ROOM_THIRD_PARTY_INVITE,
                     stateKey = action.stateKey,
                     body = emptyMap()

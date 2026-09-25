@@ -16,17 +16,22 @@
 
 package org.matrix.android.sdk.internal.database.query
 
-import org.matrix.android.sdk.api.session.room.model.Membership
-import org.matrix.android.sdk.internal.database.model.EventEntity
-import org.matrix.android.sdk.internal.database.model.RoomEntity
-import org.matrix.android.sdk.internal.database.model.RoomEntityFields
 import io.realm.Realm
 import io.realm.RealmQuery
 import io.realm.kotlin.where
+import org.matrix.android.sdk.api.session.room.model.Membership
+import org.matrix.android.sdk.internal.database.model.EventEntity
+import org.matrix.android.sdk.internal.database.model.RoomAccountDataEntityFields
+import org.matrix.android.sdk.internal.database.model.RoomEntity
+import org.matrix.android.sdk.internal.database.model.RoomEntityFields
 
 internal fun RoomEntity.Companion.where(realm: Realm, roomId: String): RealmQuery<RoomEntity> {
     return realm.where<RoomEntity>()
             .equalTo(RoomEntityFields.ROOM_ID, roomId)
+}
+
+internal fun RoomEntity.Companion.getOrCreate(realm: Realm, roomId: String): RoomEntity {
+    return where(realm, roomId).findFirst() ?: realm.createObject(RoomEntity::class.java, roomId)
 }
 
 internal fun RoomEntity.Companion.where(realm: Realm, membership: Membership? = null): RealmQuery<RoomEntity> {
@@ -39,4 +44,12 @@ internal fun RoomEntity.Companion.where(realm: Realm, membership: Membership? = 
 
 internal fun RoomEntity.fastContains(eventId: String): Boolean {
     return EventEntity.where(realm, eventId = eventId).findFirst() != null
+}
+
+internal fun RoomEntity.removeAccountData(type: String) {
+    accountData
+            .where()
+            .equalTo(RoomAccountDataEntityFields.TYPE, type)
+            .findFirst()
+            ?.deleteFromRealm()
 }

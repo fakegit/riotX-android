@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2021 New Vector Ltd
+ * Copyright 2021-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.call.audio
@@ -22,8 +13,9 @@ import androidx.media.AudioFocusRequestCompat
 import androidx.media.AudioManagerCompat
 import timber.log.Timber
 
-class DefaultAudioDeviceRouter(private val audioManager: AudioManager,
-                               private val callAudioManager: CallAudioManager
+class DefaultAudioDeviceRouter(
+        private val audioManager: AudioManager,
+        private val callAudioManager: CallAudioManager
 ) : CallAudioManager.AudioDeviceRouter, AudioManager.OnAudioFocusChangeListener {
 
     private var audioFocusLost = false
@@ -31,8 +23,9 @@ class DefaultAudioDeviceRouter(private val audioManager: AudioManager,
     private var focusRequestCompat: AudioFocusRequestCompat? = null
 
     override fun setAudioRoute(device: CallAudioManager.Device) {
-        audioManager.isSpeakerphoneOn = device === CallAudioManager.Device.SPEAKER
-        setBluetoothAudioRoute(device === CallAudioManager.Device.WIRELESS_HEADSET)
+        @Suppress("DEPRECATION")
+        audioManager.isSpeakerphoneOn = device is CallAudioManager.Device.Speaker
+        setBluetoothAudioRoute(device is CallAudioManager.Device.WirelessHeadset)
     }
 
     override fun setMode(mode: CallAudioManager.Mode): Boolean {
@@ -43,6 +36,7 @@ class DefaultAudioDeviceRouter(private val audioManager: AudioManager,
                 AudioManagerCompat.abandonAudioFocusRequest(audioManager, it)
             }
             focusRequestCompat = null
+            @Suppress("DEPRECATION")
             audioManager.isSpeakerphoneOn = false
             setBluetoothAudioRoute(false)
             return true
@@ -78,10 +72,12 @@ class DefaultAudioDeviceRouter(private val audioManager: AudioManager,
      */
     private fun setBluetoothAudioRoute(enabled: Boolean) {
         if (enabled) {
+            @Suppress("DEPRECATION")
             audioManager.startBluetoothSco()
             audioManager.isBluetoothScoOn = true
         } else {
             audioManager.isBluetoothScoOn = false
+            @Suppress("DEPRECATION")
             audioManager.stopBluetoothSco()
         }
     }

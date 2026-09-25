@@ -16,25 +16,41 @@
 
 package org.matrix.android.sdk.api.session.crypto.verification
 
+enum class QRCodeVerificationState {
+    // ie. we started
+    Reciprocated,
+
+    // When started/scanned by other side and waiting for confirmation
+    // that was really scanned
+    WaitingForScanConfirmation,
+    WaitingForOtherDone,
+    Done,
+    Cancelled
+}
+
 interface QrCodeVerificationTransaction : VerificationTransaction {
 
+    fun state(): QRCodeVerificationState
+
     /**
-     * To use to display a qr code, for the other user to scan it
+     * To use to display a qr code, for the other user to scan it.
      */
     val qrCodeText: String?
 
     /**
-     * Call when you have scan the other user QR code
+     * Call when you have scan the other user QR code.
      */
-    fun userHasScannedOtherQrCode(otherQrCodeText: String)
+//    suspend fun userHasScannedOtherQrCode(otherQrCodeText: String)
 
     /**
-     * Call when you confirm that other user has scanned your QR code
+     * Call when you confirm that other user has scanned your QR code.
      */
-    fun otherUserScannedMyQrCode()
+    suspend fun otherUserScannedMyQrCode()
 
     /**
-     * Call when you do not confirm that other user has scanned your QR code
+     * Call when you do not confirm that other user has scanned your QR code.
      */
-    fun otherUserDidNotScannedMyQrCode()
+    suspend fun otherUserDidNotScannedMyQrCode()
+
+    override fun isSuccessful() = state() == QRCodeVerificationState.Done
 }

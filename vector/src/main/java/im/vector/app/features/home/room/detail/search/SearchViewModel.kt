@@ -1,42 +1,32 @@
 /*
- * Copyright 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home.room.detail.search
 
-import androidx.lifecycle.viewModelScope
 import com.airbnb.mvrx.Fail
-import com.airbnb.mvrx.FragmentViewModelContext
 import com.airbnb.mvrx.Loading
-import com.airbnb.mvrx.MvRxViewModelFactory
+import com.airbnb.mvrx.MavericksViewModelFactory
 import com.airbnb.mvrx.Success
-import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import im.vector.app.core.extensions.exhaustive
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.VectorViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import org.matrix.android.sdk.api.failure.Failure
 import org.matrix.android.sdk.api.session.Session
+import org.matrix.android.sdk.api.session.getRoom
 import org.matrix.android.sdk.api.session.search.SearchResult
 
 class SearchViewModel @AssistedInject constructor(
         @Assisted private val initialState: SearchViewState,
-        session: Session
+        private val session: Session
 ) : VectorViewModel<SearchViewState, SearchAction, SearchViewEvents>(initialState) {
 
     private val room = session.getRoom(initialState.roomId)
@@ -46,25 +36,18 @@ class SearchViewModel @AssistedInject constructor(
     private var nextBatch: String? = null
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: SearchViewState): SearchViewModel
+    interface Factory : MavericksAssistedViewModelFactory<SearchViewModel, SearchViewState> {
+        override fun create(initialState: SearchViewState): SearchViewModel
     }
 
-    companion object : MvRxViewModelFactory<SearchViewModel, SearchViewState> {
-
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: SearchViewState): SearchViewModel? {
-            val fragment: SearchFragment = (viewModelContext as FragmentViewModelContext).fragment()
-            return fragment.viewModelFactory.create(state)
-        }
-    }
+    companion object : MavericksViewModelFactory<SearchViewModel, SearchViewState> by hiltMavericksViewModelFactory()
 
     override fun handle(action: SearchAction) {
         when (action) {
             is SearchAction.SearchWith -> handleSearchWith(action)
-            is SearchAction.LoadMore   -> handleLoadMore()
-            is SearchAction.Retry      -> handleRetry()
-        }.exhaustive
+            is SearchAction.LoadMore -> handleLoadMore()
+            is SearchAction.Retry -> handleRetry()
+        }
     }
 
     private fun handleSearchWith(action: SearchAction.SearchWith) {
@@ -109,8 +92,9 @@ class SearchViewModel @AssistedInject constructor(
 
         currentTask = viewModelScope.launch {
             try {
-                val result = room.search(
+                val result = session.searchService().search(
                         searchTerm = state.searchTerm,
+                        roomId = initialState.roomId,
                         nextBatch = nextBatch,
                         orderByRecent = true,
                         beforeLimit = 0,
@@ -120,7 +104,7 @@ class SearchViewModel @AssistedInject constructor(
                 )
                 onSearchResultSuccess(result)
             } catch (failure: Throwable) {
-                if (failure is Failure.Cancelled) return@launch
+                if (failure is CancellationException) return@launch
 
                 _viewEvents.post(SearchViewEvents.Failure(failure))
                 setState {
@@ -148,10 +132,5 @@ class SearchViewModel @AssistedInject constructor(
                     asyncSearchRequest = Success(Unit)
             )
         }
-    }
-
-    override fun onCleared() {
-        currentTask?.cancel()
-        super.onCleared()
     }
 }

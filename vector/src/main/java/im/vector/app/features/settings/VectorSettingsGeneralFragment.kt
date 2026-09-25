@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 @file:Suppress("UNUSED_VARIABLE", "UNUSED_ANONYMOUS_PARAMETER", "UNUSED_PARAMETER")
@@ -33,47 +24,63 @@ import androidx.preference.PreferenceCategory
 import androidx.preference.SwitchPreference
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.cache.DiskCache
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
 import im.vector.app.core.dialogs.GalleryOrCameraDialogHelper
+import im.vector.app.core.dialogs.GalleryOrCameraDialogHelperFactory
 import im.vector.app.core.extensions.hideKeyboard
-import im.vector.app.core.extensions.showPassword
+import im.vector.app.core.extensions.hidePassword
+import im.vector.app.core.extensions.toMvRxBundle
 import im.vector.app.core.intent.getFilenameFromUri
 import im.vector.app.core.platform.SimpleTextWatcher
 import im.vector.app.core.preference.UserAvatarPreference
 import im.vector.app.core.preference.VectorPreference
+import im.vector.app.core.preference.VectorPreferenceCategory
 import im.vector.app.core.preference.VectorSwitchPreference
-import im.vector.app.core.resources.ColorProvider
 import im.vector.app.core.utils.TextUtils
 import im.vector.app.core.utils.getSizeOfFiles
+import im.vector.app.core.utils.openUrlInChromeCustomTab
 import im.vector.app.core.utils.toast
 import im.vector.app.databinding.DialogChangePasswordBinding
 import im.vector.app.features.MainActivity
 import im.vector.app.features.MainActivityArgs
+import im.vector.app.features.analytics.plan.MobileScreen
+import im.vector.app.features.discovery.DiscoverySettingsFragment
+import im.vector.app.features.navigation.SettingsActivityPayload
 import im.vector.app.features.workers.signout.SignOutUiWorker
-import io.reactivex.android.schedulers.AndroidSchedulers
+import im.vector.lib.strings.CommonStrings
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.matrix.android.sdk.api.failure.isInvalidPassword
+import org.matrix.android.sdk.api.session.getUser
 import org.matrix.android.sdk.api.session.integrationmanager.IntegrationManagerConfig
 import org.matrix.android.sdk.api.session.integrationmanager.IntegrationManagerService
-import org.matrix.android.sdk.rx.rx
-import org.matrix.android.sdk.rx.unwrap
+import org.matrix.android.sdk.flow.flow
+import org.matrix.android.sdk.flow.unwrap
+import timber.log.Timber
 import java.io.File
+import java.net.URL
 import java.util.UUID
 import javax.inject.Inject
 
-class VectorSettingsGeneralFragment @Inject constructor(
-        colorProvider: ColorProvider
-):
+@AndroidEntryPoint
+class VectorSettingsGeneralFragment :
         VectorSettingsBaseFragment(),
         GalleryOrCameraDialogHelper.Listener {
 
-    override var titleRes = R.string.settings_general_title
+    @Inject lateinit var galleryOrCameraDialogHelperFactory: GalleryOrCameraDialogHelperFactory
+
+    override var titleRes = CommonStrings.settings_general_title
     override val preferenceXmlRes = R.xml.vector_settings_general
 
-    private val galleryOrCameraDialogHelper = GalleryOrCameraDialogHelper(this, colorProvider)
+    private lateinit var galleryOrCameraDialogHelper: GalleryOrCameraDialogHelper
 
     private val mUserSettingsCategory by lazy {
         findPreference<PreferenceCategory>(VectorPreferences.SETTINGS_USER_SETTINGS_PREFERENCE_KEY)!!
@@ -87,8 +94,17 @@ class VectorSettingsGeneralFragment @Inject constructor(
     private val mPasswordPreference by lazy {
         findPreference<VectorPreference>(VectorPreferences.SETTINGS_CHANGE_PASSWORD_PREFERENCE_KEY)!!
     }
+    private val mManage3pidsPreference by lazy {
+        findPreference<VectorPreference>(VectorPreferences.SETTINGS_EMAILS_AND_PHONE_NUMBERS_PREFERENCE_KEY)!!
+    }
     private val mIdentityServerPreference by lazy {
         findPreference<VectorPreference>(VectorPreferences.SETTINGS_IDENTITY_SERVER_PREFERENCE_KEY)!!
+    }
+    private val mExternalAccountManagementPreference by lazy {
+        findPreference<VectorPreference>(VectorPreferences.SETTINGS_EXTERNAL_ACCOUNT_MANAGEMENT_KEY)!!
+    }
+    private val mDeactivateAccountCategory by lazy {
+        findPreference<VectorPreferenceCategory>("SETTINGS_DEACTIVATE_ACCOUNT_CATEGORY_KEY")!!
     }
 
     // Local contacts
@@ -110,6 +126,12 @@ class VectorSettingsGeneralFragment @Inject constructor(
         }
     }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        analyticsScreenName = MobileScreen.ScreenName.SettingsGeneral
+        galleryOrCameraDialogHelper = galleryOrCameraDialogHelperFactory.create(this)
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -118,29 +140,29 @@ class VectorSettingsGeneralFragment @Inject constructor(
     }
 
     private fun observeUserAvatar() {
-        session.rx()
+        session.flow()
                 .liveUser(session.myUserId)
                 .unwrap()
-                .distinctUntilChanged { user -> user.avatarUrl }
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe { mUserAvatarPreference.refreshAvatar(it) }
-                .disposeOnDestroyView()
+                .distinctUntilChangedBy { user -> user.avatarUrl }
+                .onEach {
+                    mUserAvatarPreference.refreshAvatar(it)
+                }
+                .launchIn(viewLifecycleOwner.lifecycleScope)
     }
 
     private fun observeUserDisplayName() {
-        session.rx()
+        session.flow()
                 .liveUser(session.myUserId)
                 .unwrap()
                 .map { it.displayName ?: "" }
                 .distinctUntilChanged()
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe { displayName ->
+                .onEach { displayName ->
                     mDisplayNamePreference.let {
                         it.summary = displayName
                         it.text = displayName
                     }
                 }
-                .disposeOnDestroyView()
+                .launchIn(viewLifecycleOwner.lifecycleScope)
     }
 
     override fun bindPref() {
@@ -162,9 +184,10 @@ class VectorSettingsGeneralFragment @Inject constructor(
             }
         }
 
+        val homeServerCapabilities = session.homeServerCapabilitiesService().getHomeServerCapabilities()
         // Password
         // Hide the preference if password can not be updated
-        if (session.getHomeServerCapabilities().canChangePassword) {
+        if (homeServerCapabilities.canChangePassword) {
             mPasswordPreference.onPreferenceClickListener = Preference.OnPreferenceClickListener {
                 onPasswordUpdateClick()
                 false
@@ -173,13 +196,48 @@ class VectorSettingsGeneralFragment @Inject constructor(
             mPasswordPreference.isVisible = false
         }
 
+        // Manage 3Pid
+        // Hide the preference if 3pids can not be updated
+        mManage3pidsPreference.isVisible = homeServerCapabilities.canChange3pid
+
+        val openDiscoveryScreenPreferenceClickListener = Preference.OnPreferenceClickListener {
+            (requireActivity() as VectorSettingsActivity).navigateTo(
+                    DiscoverySettingsFragment::class.java,
+                    SettingsActivityPayload.DiscoverySettings().toMvRxBundle()
+            )
+            true
+        }
+
+        val discoveryPreference = findPreference<VectorPreference>(VectorPreferences.SETTINGS_DISCOVERY_PREFERENCE_KEY)!!
+        discoveryPreference.onPreferenceClickListener = openDiscoveryScreenPreferenceClickListener
+
+        mIdentityServerPreference.onPreferenceClickListener = openDiscoveryScreenPreferenceClickListener
+
+        // External account management URL for delegated OIDC auth
+        // Hide the preference if no URL is given by server
+        if (homeServerCapabilities.externalAccountManagementUrl != null) {
+            mExternalAccountManagementPreference.onPreferenceClickListener = Preference.OnPreferenceClickListener {
+                openUrlInChromeCustomTab(it.context, null, homeServerCapabilities.externalAccountManagementUrl!!)
+                true
+            }
+
+            val hostname = URL(homeServerCapabilities.externalAccountManagementUrl).host
+
+            mExternalAccountManagementPreference.summary = requireContext().getString(
+                    CommonStrings.settings_external_account_management,
+                    hostname
+            )
+        } else {
+            mExternalAccountManagementPreference.isVisible = false
+        }
+
         // Advanced settings
 
         // user account
         findPreference<VectorPreference>(VectorPreferences.SETTINGS_LOGGED_IN_PREFERENCE_KEY)!!
                 .summary = session.myUserId
 
-        // home server
+        // homeserver
         findPreference<VectorPreference>(VectorPreferences.SETTINGS_HOME_SERVER_PREFERENCE_KEY)!!
                 .summary = session.sessionParams.homeServerUrl
 
@@ -211,7 +269,17 @@ class VectorSettingsGeneralFragment @Inject constructor(
                 // Disable it while updating the state, will be re-enabled by the account data listener.
                 it.isEnabled = false
                 lifecycleScope.launch {
-                    session.integrationManagerService().setIntegrationEnabled(newValue as Boolean)
+                    try {
+                        session.integrationManagerService().setIntegrationEnabled(newValue as Boolean)
+                    } catch (failure: Throwable) {
+                        Timber.e(failure, "Failed to update integration manager state")
+                        activity?.let { activity ->
+                            Toast.makeText(activity, errorFormatter.toHumanReadable(failure), Toast.LENGTH_SHORT).show()
+                        }
+                        // Restore the previous state
+                        it.isChecked = !it.isChecked
+                        it.isEnabled = true
+                    }
                 }
                 true
             }
@@ -219,37 +287,28 @@ class VectorSettingsGeneralFragment @Inject constructor(
 
         // clear medias cache
         findPreference<VectorPreference>(VectorPreferences.SETTINGS_CLEAR_MEDIA_CACHE_PREFERENCE_KEY)!!.let {
-            val size = getSizeOfFiles(File(requireContext().cacheDir, DiskCache.Factory.DEFAULT_DISK_CACHE_DIR)) + session.fileService().getCacheSize()
-
-            it.summary = TextUtils.formatFileSize(requireContext(), size.toLong())
-
-            it.onPreferenceClickListener = Preference.OnPreferenceClickListener {
-                GlobalScope.launch(Dispatchers.Main) {
-                    // On UI Thread
-                    displayLoadingView()
-
-                    Glide.get(requireContext()).clearMemory()
-                    session.fileService().clearCache()
-
-                    var newSize: Int
-
-                    withContext(Dispatchers.IO) {
-                        // On BG thread
-                        Glide.get(requireContext()).clearDiskCache()
-
-                        newSize = getSizeOfFiles(File(requireContext().cacheDir, DiskCache.Factory.DEFAULT_DISK_CACHE_DIR))
-                        newSize += session.fileService().getCacheSize()
+            lifecycleScope.launch(Dispatchers.Main) {
+                it.summary = getString(CommonStrings.loading)
+                val size = getCacheSize()
+                it.summary = TextUtils.formatFileSize(requireContext(), size)
+                it.onPreferenceClickListener = Preference.OnPreferenceClickListener {
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        // On UI Thread
+                        displayLoadingView()
+                        Glide.get(requireContext()).clearMemory()
+                        session.fileService().clearCache()
+                        val newSize = withContext(Dispatchers.IO) {
+                            // On BG thread
+                            Glide.get(requireContext()).clearDiskCache()
+                            getCacheSize()
+                        }
+                        it.summary = TextUtils.formatFileSize(requireContext(), newSize)
+                        hideLoadingView()
                     }
-
-                    it.summary = TextUtils.formatFileSize(requireContext(), newSize.toLong())
-
-                    hideLoadingView()
+                    false
                 }
-
-                false
             }
         }
-
         // Sign out
         findPreference<VectorPreference>("SETTINGS_SIGN_OUT_KEY")!!
                 .onPreferenceClickListener = Preference.OnPreferenceClickListener {
@@ -259,12 +318,19 @@ class VectorSettingsGeneralFragment @Inject constructor(
 
             false
         }
+        // Account deactivation is visible only if account is not managed by an external URL.
+        mDeactivateAccountCategory.isVisible = homeServerCapabilities.delegatedOidcAuthEnabled.not()
+    }
+
+    private suspend fun getCacheSize(): Long = withContext(Dispatchers.IO) {
+        getSizeOfFiles(File(requireContext().cacheDir, DiskCache.Factory.DEFAULT_DISK_CACHE_DIR)) +
+                session.fileService().getCacheSize()
     }
 
     override fun onResume() {
         super.onResume()
         // Refresh identity server summary
-        mIdentityServerPreference.summary = session.identityService().getCurrentIdentityServerUrl() ?: getString(R.string.identity_server_not_defined)
+        mIdentityServerPreference.summary = session.identityService().getCurrentIdentityServerUrl() ?: getString(CommonStrings.identity_server_not_defined)
         refreshIntegrationManagerSettings()
         session.integrationManagerService().addListener(integrationServiceListener)
     }
@@ -306,10 +372,17 @@ class VectorSettingsGeneralFragment @Inject constructor(
 
         lifecycleScope.launch {
             val result = runCatching {
-                session.updateAvatar(session.myUserId, uri, getFilenameFromUri(context, uri) ?: UUID.randomUUID().toString())
+                session.profileService().updateAvatar(session.myUserId, uri, getFilenameFromUri(context, uri) ?: UUID.randomUUID().toString())
             }
             if (!isAdded) return@launch
-            onCommonDone(result.fold({ null }, { it.localizedMessage }))
+
+            result.fold(
+                    onSuccess = { hideLoadingView() },
+                    onFailure = {
+                        hideLoadingView()
+                        displayErrorDialog(it)
+                    }
+            )
         }
     }
 
@@ -332,7 +405,7 @@ class VectorSettingsGeneralFragment @Inject constructor(
             startActivityForResult(intent, REQUEST_PHONEBOOK_COUNTRY)
             true
         }
-        */
+         */
     }
 
     // ==============================================================================================================
@@ -347,23 +420,11 @@ class VectorSettingsGeneralFragment @Inject constructor(
             val view: ViewGroup = activity.layoutInflater.inflate(R.layout.dialog_change_password, null) as ViewGroup
             val views = DialogChangePasswordBinding.bind(view)
 
-            var passwordShown = false
-
-            views.changePasswordShowPasswords.setOnClickListener {
-                passwordShown = !passwordShown
-
-                views.changePasswordOldPwdText.showPassword(passwordShown)
-                views.changePasswordNewPwdText.showPassword(passwordShown)
-                views.changePasswordConfirmNewPwdText.showPassword(passwordShown)
-
-                views.changePasswordShowPasswords.render(passwordShown)
-            }
-
-            val dialog = AlertDialog.Builder(activity)
+            val dialog = MaterialAlertDialogBuilder(activity)
                     .setView(view)
                     .setCancelable(false)
-                    .setPositiveButton(R.string.settings_change_password, null)
-                    .setNegativeButton(R.string.cancel, null)
+                    .setPositiveButton(CommonStrings.settings_change_password, null)
+                    .setNegativeButton(CommonStrings.action_cancel, null)
                     .setOnDismissListener {
                         view.hideKeyboard()
                     }
@@ -377,13 +438,8 @@ class VectorSettingsGeneralFragment @Inject constructor(
                 fun updateUi() {
                     val oldPwd = views.changePasswordOldPwdText.text.toString()
                     val newPwd = views.changePasswordNewPwdText.text.toString()
-                    val newConfirmPwd = views.changePasswordConfirmNewPwdText.text.toString()
 
-                    updateButton.isEnabled = oldPwd.isNotEmpty() && newPwd.isNotEmpty() && newPwd == newConfirmPwd
-
-                    if (newPwd.isNotEmpty() && newConfirmPwd.isNotEmpty() && newPwd != newConfirmPwd) {
-                        views.changePasswordConfirmNewPwdTil.error = getString(R.string.passwords_do_not_match)
-                    }
+                    updateButton.isEnabled = oldPwd.isNotEmpty() && newPwd.isNotEmpty()
                 }
 
                 views.changePasswordOldPwdText.addTextChangedListener(object : SimpleTextWatcher() {
@@ -395,43 +451,30 @@ class VectorSettingsGeneralFragment @Inject constructor(
 
                 views.changePasswordNewPwdText.addTextChangedListener(object : SimpleTextWatcher() {
                     override fun afterTextChanged(s: Editable) {
-                        views.changePasswordConfirmNewPwdTil.error = null
-                        updateUi()
-                    }
-                })
-
-                views.changePasswordConfirmNewPwdText.addTextChangedListener(object : SimpleTextWatcher() {
-                    override fun afterTextChanged(s: Editable) {
-                        views.changePasswordConfirmNewPwdTil.error = null
                         updateUi()
                     }
                 })
 
                 fun showPasswordLoadingView(toShow: Boolean) {
                     if (toShow) {
-                        views.changePasswordShowPasswords.isEnabled = false
                         views.changePasswordOldPwdText.isEnabled = false
                         views.changePasswordNewPwdText.isEnabled = false
-                        views.changePasswordConfirmNewPwdText.isEnabled = false
                         views.changePasswordLoader.isVisible = true
                         updateButton.isEnabled = false
                         cancelButton.isEnabled = false
                     } else {
-                        views.changePasswordShowPasswords.isEnabled = true
                         views.changePasswordOldPwdText.isEnabled = true
                         views.changePasswordNewPwdText.isEnabled = true
-                        views.changePasswordConfirmNewPwdText.isEnabled = true
                         views.changePasswordLoader.isVisible = false
                         updateButton.isEnabled = true
                         cancelButton.isEnabled = true
                     }
                 }
 
-                updateButton.setOnClickListener {
-                    if (passwordShown) {
-                        // Hide passwords during processing
-                        views.changePasswordShowPasswords.performClick()
-                    }
+                updateButton.debouncedClicks {
+                    // Hide passwords during processing
+                    views.changePasswordOldPwdText.hidePassword()
+                    views.changePasswordNewPwdText.hidePassword()
 
                     view.hideKeyboard()
 
@@ -441,7 +484,7 @@ class VectorSettingsGeneralFragment @Inject constructor(
                     showPasswordLoadingView(true)
                     lifecycleScope.launch {
                         val result = runCatching {
-                            session.changePassword(oldPwd, newPwd)
+                            session.accountService().changePassword(oldPwd, newPwd)
                         }
                         if (!isAdded) {
                             return@launch
@@ -449,12 +492,12 @@ class VectorSettingsGeneralFragment @Inject constructor(
                         showPasswordLoadingView(false)
                         result.fold({
                             dialog.dismiss()
-                            activity.toast(R.string.settings_password_updated)
+                            activity.toast(CommonStrings.settings_password_updated)
                         }, { failure ->
                             if (failure.isInvalidPassword()) {
-                                views.changePasswordOldPwdTil.error = getString(R.string.settings_fail_to_update_password_invalid_current_password)
+                                views.changePasswordOldPwdTil.error = getString(CommonStrings.settings_fail_to_update_password_invalid_current_password)
                             } else {
-                                views.changePasswordOldPwdTil.error = getString(R.string.settings_fail_to_update_password)
+                                views.changePasswordOldPwdTil.error = getString(CommonStrings.settings_fail_to_update_password)
                             }
                         })
                     }
@@ -473,17 +516,18 @@ class VectorSettingsGeneralFragment @Inject constructor(
             displayLoadingView()
 
             lifecycleScope.launch {
-                val result = runCatching { session.setDisplayName(session.myUserId, value) }
+                val result = runCatching { session.profileService().setDisplayName(session.myUserId, value) }
                 if (!isAdded) return@launch
                 result.fold(
-                        {
+                        onSuccess = {
                             // refresh the settings value
                             mDisplayNamePreference.summary = value
                             mDisplayNamePreference.text = value
-                            onCommonDone(null)
+                            hideLoadingView()
                         },
-                        {
-                            onCommonDone(it.localizedMessage)
+                        onFailure = {
+                            hideLoadingView()
+                            displayErrorDialog(it)
                         }
                 )
             }

@@ -19,7 +19,7 @@ import io.realm.RealmList
 import io.realm.RealmObject
 
 /**
- * Keep the latest state of a poll
+ * Keep the latest state of a poll.
  */
 internal open class PollResponseAggregatedSummaryEntity(
         // For now we persist this a JSON for greater flexibility
@@ -33,8 +33,7 @@ internal open class PollResponseAggregatedSummaryEntity(
 
         // The list of the eventIDs used to build the summary (might be out of sync if chunked received from message chunk)
         var sourceEvents: RealmList<String> = RealmList(),
-        var sourceLocalEchoEvents: RealmList<String> = RealmList()
-) : RealmObject() {
-
-    companion object
-}
+        var sourceLocalEchoEvents: RealmList<String> = RealmList(),
+        // list of related event ids which are encrypted due to decryption failure
+        var encryptedRelatedEventIds: RealmList<String> = RealmList(),
+) : RealmObject()

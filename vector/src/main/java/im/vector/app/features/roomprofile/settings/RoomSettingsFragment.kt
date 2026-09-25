@@ -1,17 +1,8 @@
 /*
- * Copyright 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roomprofile.settings
@@ -23,44 +14,51 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import androidx.appcompat.app.AlertDialog
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import com.airbnb.mvrx.args
 import com.airbnb.mvrx.fragmentViewModel
 import com.airbnb.mvrx.withState
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
 import im.vector.app.core.dialogs.GalleryOrCameraDialogHelper
+import im.vector.app.core.dialogs.GalleryOrCameraDialogHelperFactory
 import im.vector.app.core.extensions.cleanup
 import im.vector.app.core.extensions.configureWith
-import im.vector.app.core.extensions.exhaustive
 import im.vector.app.core.intent.getFilenameFromUri
 import im.vector.app.core.platform.OnBackPressed
 import im.vector.app.core.platform.VectorBaseFragment
-import im.vector.app.core.resources.ColorProvider
+import im.vector.app.core.platform.VectorMenuProvider
 import im.vector.app.core.utils.toast
 import im.vector.app.databinding.FragmentRoomSettingGenericBinding
+import im.vector.app.features.analytics.plan.MobileScreen
 import im.vector.app.features.home.AvatarRenderer
 import im.vector.app.features.roomprofile.RoomProfileArgs
 import im.vector.app.features.roomprofile.RoomProfileSharedActionViewModel
-import im.vector.app.features.roomprofile.settings.historyvisibility.RoomHistoryVisibilitySharedActionViewModel
 import im.vector.app.features.roomprofile.settings.historyvisibility.RoomHistoryVisibilityBottomSheet
-import im.vector.app.features.roomprofile.settings.joinrule.RoomJoinRuleBottomSheet
+import im.vector.app.features.roomprofile.settings.historyvisibility.RoomHistoryVisibilitySharedActionViewModel
+import im.vector.app.features.roomprofile.settings.joinrule.RoomJoinRuleActivity
 import im.vector.app.features.roomprofile.settings.joinrule.RoomJoinRuleSharedActionViewModel
-
+import im.vector.lib.strings.CommonStrings
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import org.matrix.android.sdk.api.session.room.model.GuestAccess
 import org.matrix.android.sdk.api.util.toMatrixItem
 import java.util.UUID
 import javax.inject.Inject
 
-class RoomSettingsFragment @Inject constructor(
-        val viewModelFactory: RoomSettingsViewModel.Factory,
-        private val controller: RoomSettingsController,
-        colorProvider: ColorProvider,
-        private val avatarRenderer: AvatarRenderer
-) :
+@AndroidEntryPoint
+class RoomSettingsFragment :
         VectorBaseFragment<FragmentRoomSettingGenericBinding>(),
         RoomSettingsController.Callback,
         OnBackPressed,
-        GalleryOrCameraDialogHelper.Listener {
+        GalleryOrCameraDialogHelper.Listener,
+        VectorMenuProvider {
+
+    @Inject lateinit var controller: RoomSettingsController
+    @Inject lateinit var avatarRenderer: AvatarRenderer
+    @Inject lateinit var galleryOrCameraDialogHelperFactory: GalleryOrCameraDialogHelperFactory
 
     private val viewModel: RoomSettingsViewModel by fragmentViewModel()
     private lateinit var roomProfileSharedActionViewModel: RoomProfileSharedActionViewModel
@@ -68,13 +66,19 @@ class RoomSettingsFragment @Inject constructor(
     private lateinit var roomJoinRuleSharedActionViewModel: RoomJoinRuleSharedActionViewModel
 
     private val roomProfileArgs: RoomProfileArgs by args()
-    private val galleryOrCameraDialogHelper = GalleryOrCameraDialogHelper(this, colorProvider)
+    private lateinit var galleryOrCameraDialogHelper: GalleryOrCameraDialogHelper
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentRoomSettingGenericBinding {
         return FragmentRoomSettingGenericBinding.inflate(inflater, container, false)
     }
 
     override fun getMenuRes() = R.menu.vector_room_settings
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        analyticsScreenName = MobileScreen.ScreenName.RoomSettings
+        galleryOrCameraDialogHelper = galleryOrCameraDialogHelperFactory.create(this)
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -83,44 +87,46 @@ class RoomSettingsFragment @Inject constructor(
         setupRoomJoinRuleSharedActionViewModel()
         controller.callback = this
         setupToolbar(views.roomSettingsToolbar)
+                .allowBack()
         views.roomSettingsRecyclerView.configureWith(controller, hasFixedSize = true)
-        views.waitingView.waitingStatusText.setText(R.string.please_wait)
+        views.waitingView.waitingStatusText.setText(CommonStrings.please_wait)
         views.waitingView.waitingStatusText.isVisible = true
 
         viewModel.observeViewEvents {
             when (it) {
                 is RoomSettingsViewEvents.Failure -> showFailure(it.throwable)
-                RoomSettingsViewEvents.Success    -> showSuccess()
-                RoomSettingsViewEvents.GoBack     -> {
+                RoomSettingsViewEvents.Success -> showSuccess()
+                RoomSettingsViewEvents.GoBack -> {
                     ignoreChanges = true
+                    @Suppress("DEPRECATION")
                     vectorBaseActivity.onBackPressed()
                 }
-            }.exhaustive
+            }
         }
     }
 
     private fun setupRoomJoinRuleSharedActionViewModel() {
         roomJoinRuleSharedActionViewModel = activityViewModelProvider.get(RoomJoinRuleSharedActionViewModel::class.java)
         roomJoinRuleSharedActionViewModel
-                .observe()
-                .subscribe { action ->
-                    viewModel.handle(RoomSettingsAction.SetRoomJoinRule(action.roomJoinRule, action.roomGuestAccess))
+                .stream()
+                .onEach { action ->
+                    viewModel.handle(RoomSettingsAction.SetRoomJoinRule(action.roomJoinRule))
                 }
-                .disposeOnDestroyView()
+                .launchIn(viewLifecycleOwner.lifecycleScope)
     }
 
     private fun setupRoomHistoryVisibilitySharedActionViewModel() {
         roomHistoryVisibilitySharedActionViewModel = activityViewModelProvider.get(RoomHistoryVisibilitySharedActionViewModel::class.java)
         roomHistoryVisibilitySharedActionViewModel
-                .observe()
-                .subscribe { action ->
+                .stream()
+                .onEach { action ->
                     viewModel.handle(RoomSettingsAction.SetRoomHistoryVisibility(action.roomHistoryVisibility))
                 }
-                .disposeOnDestroyView()
+                .launchIn(viewLifecycleOwner.lifecycleScope)
     }
 
     private fun showSuccess() {
-        activity?.toast(R.string.room_settings_save_success)
+        activity?.toast(CommonStrings.room_settings_save_success)
     }
 
     override fun onDestroyView() {
@@ -129,18 +135,20 @@ class RoomSettingsFragment @Inject constructor(
         super.onDestroyView()
     }
 
-    override fun onPrepareOptionsMenu(menu: Menu) {
+    override fun handlePrepareMenu(menu: Menu) {
         withState(viewModel) { state ->
             menu.findItem(R.id.roomSettingsSaveAction).isVisible = state.showSaveAction
         }
-        super.onPrepareOptionsMenu(menu)
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == R.id.roomSettingsSaveAction) {
-            viewModel.handle(RoomSettingsAction.Save)
+    override fun handleMenuItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.roomSettingsSaveAction -> {
+                viewModel.handle(RoomSettingsAction.Save)
+                true
+            }
+            else -> false
         }
-        return super.onOptionsItemSelected(item)
     }
 
     override fun invalidate() = withState(viewModel) { viewState ->
@@ -174,11 +182,14 @@ class RoomSettingsFragment @Inject constructor(
                 .show(childFragmentManager, "RoomHistoryVisibilityBottomSheet")
     }
 
-    override fun onJoinRuleClicked()  = withState(viewModel) { state ->
-        val currentJoinRule = state.newRoomJoinRules.newJoinRules ?: state.currentRoomJoinRules
+    override fun onJoinRuleClicked() {
+        startActivity(RoomJoinRuleActivity.newIntent(requireContext(), roomProfileArgs.roomId))
+    }
+
+    override fun onToggleGuestAccess() = withState(viewModel) { state ->
         val currentGuestAccess = state.newRoomJoinRules.newGuestAccess ?: state.currentGuestAccess
-        RoomJoinRuleBottomSheet.newInstance(currentJoinRule, currentGuestAccess)
-                .show(childFragmentManager, "RoomJoinRuleBottomSheet")
+        val toggled = if (currentGuestAccess == GuestAccess.Forbidden) GuestAccess.CanJoin else GuestAccess.Forbidden
+        viewModel.handle(RoomSettingsAction.SetRoomGuestAccess(toggled))
     }
 
     override fun onImageReady(uri: Uri?) {
@@ -187,7 +198,8 @@ class RoomSettingsFragment @Inject constructor(
                 RoomSettingsAction.SetAvatarAction(
                         RoomSettingsViewState.AvatarAction.UpdateAvatar(
                                 newAvatarUri = uri,
-                                newAvatarFileName = getFilenameFromUri(requireContext(), uri) ?: UUID.randomUUID().toString())
+                                newAvatarFileName = getFilenameFromUri(requireContext(), uri) ?: UUID.randomUUID().toString()
+                        )
                 )
         )
     }
@@ -195,10 +207,10 @@ class RoomSettingsFragment @Inject constructor(
     override fun onAvatarDelete() {
         withState(viewModel) {
             when (it.avatarAction) {
-                RoomSettingsViewState.AvatarAction.None            -> {
+                RoomSettingsViewState.AvatarAction.None -> {
                     viewModel.handle(RoomSettingsAction.SetAvatarAction(RoomSettingsViewState.AvatarAction.DeleteAvatar))
                 }
-                RoomSettingsViewState.AvatarAction.DeleteAvatar    -> {
+                RoomSettingsViewState.AvatarAction.DeleteAvatar -> {
                     /* Should not happen */
                 }
                 is RoomSettingsViewState.AvatarAction.UpdateAvatar -> {
@@ -220,13 +232,13 @@ class RoomSettingsFragment @Inject constructor(
 
         return withState(viewModel) {
             return@withState if (it.showSaveAction) {
-                AlertDialog.Builder(requireContext())
-                        .setTitle(R.string.dialog_title_warning)
-                        .setMessage(R.string.warning_unsaved_change)
-                        .setPositiveButton(R.string.warning_unsaved_change_discard) { _, _ ->
+                MaterialAlertDialogBuilder(requireContext())
+                        .setTitle(CommonStrings.dialog_title_warning)
+                        .setMessage(CommonStrings.warning_unsaved_change)
+                        .setPositiveButton(CommonStrings.warning_unsaved_change_discard) { _, _ ->
                             viewModel.handle(RoomSettingsAction.Cancel)
                         }
-                        .setNegativeButton(R.string.cancel, null)
+                        .setNegativeButton(CommonStrings.action_cancel, null)
                         .show()
                 true
             } else {

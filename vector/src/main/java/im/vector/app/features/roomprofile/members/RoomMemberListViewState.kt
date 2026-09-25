@@ -1,43 +1,40 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roomprofile.members
 
 import androidx.annotation.StringRes
 import com.airbnb.mvrx.Async
-import com.airbnb.mvrx.MvRxState
+import com.airbnb.mvrx.MavericksState
 import com.airbnb.mvrx.Uninitialized
-import im.vector.app.R
+import im.vector.app.core.platform.GenericIdArgs
 import im.vector.app.features.roomprofile.RoomProfileArgs
-import org.matrix.android.sdk.api.crypto.RoomEncryptionTrustLevel
+import im.vector.lib.strings.CommonStrings
+import org.matrix.android.sdk.api.session.crypto.model.UserVerificationLevel
 import org.matrix.android.sdk.api.session.events.model.Event
 import org.matrix.android.sdk.api.session.room.model.RoomMemberSummary
 import org.matrix.android.sdk.api.session.room.model.RoomSummary
+import org.matrix.android.sdk.api.session.room.powerlevels.UserPowerLevel
 
 data class RoomMemberListViewState(
         val roomId: String,
         val roomSummary: Async<RoomSummary> = Uninitialized,
-        val roomMemberSummaries: Async<RoomMemberSummaries> = Uninitialized,
+        val roomMemberSummaries: Async<RoomMembersByRole> = Uninitialized,
+        val areAllMembersLoaded: Boolean = false,
+        val ignoredUserIds: List<String> = emptyList(),
         val filter: String = "",
         val threePidInvites: Async<List<Event>> = Uninitialized,
-        val trustLevelMap: Async<Map<String, RoomEncryptionTrustLevel?>> = Uninitialized,
+        val trustLevelMap: Async<Map<String, UserVerificationLevel>> = Uninitialized,
         val actionsPermissions: ActionPermissions = ActionPermissions()
-) : MvRxState {
+) : MavericksState {
 
     constructor(args: RoomProfileArgs) : this(roomId = args.roomId)
+
+    constructor(args: GenericIdArgs) : this(roomId = args.id)
 }
 
 data class ActionPermissions(
@@ -45,12 +42,16 @@ data class ActionPermissions(
         val canRevokeThreePidInvite: Boolean = false
 )
 
-typealias RoomMemberSummaries = List<Pair<RoomMemberListCategories, List<RoomMemberSummary>>>
+data class RoomMemberWithPowerLevel(
+        val powerLevel: UserPowerLevel,
+        val summary: RoomMemberSummary,
+)
+
+typealias RoomMembersByRole = List<Pair<RoomMemberListCategories, List<RoomMemberWithPowerLevel>>>
 
 enum class RoomMemberListCategories(@StringRes val titleRes: Int) {
-    ADMIN(R.string.room_member_power_level_admins),
-    MODERATOR(R.string.room_member_power_level_moderators),
-    CUSTOM(R.string.room_member_power_level_custom),
-    INVITE(R.string.room_member_power_level_invites),
-    USER(R.string.room_member_power_level_users)
+    ADMIN(CommonStrings.room_member_power_level_admins),
+    MODERATOR(CommonStrings.room_member_power_level_moderators),
+    INVITE(CommonStrings.room_member_power_level_invites),
+    USER(CommonStrings.room_member_power_level_users)
 }

@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.reactions.widget
 
@@ -29,8 +20,10 @@ import kotlin.math.sin
  * This view will draw dots floating around the center of it's view
  * As describe in http://frogermcs.github.io/twitters-like-animation-in-android-alternative/
  */
-class DotsView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null,
-                                         defStyleAttr: Int = 0) : View(context, attrs, defStyleAttr) {
+class DotsView @JvmOverloads constructor(
+        context: Context, attrs: AttributeSet? = null,
+        defStyleAttr: Int = 0
+) : View(context, attrs, defStyleAttr) {
 
     private var COLOR_1 = -0x3ef9
     private var COLOR_2 = -0x6800
@@ -126,10 +119,12 @@ class DotsView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             this.currentDotSize2 = maxDotSize
         } else if (currentProgress < 0.5) {
             this.currentDotSize2 = CircleView.mapValueFromRangeToRange(
-                    currentProgress, 0.2f, 0.5f, maxDotSize, 0.3f * maxDotSize)
+                    currentProgress, 0.2f, 0.5f, maxDotSize, 0.3f * maxDotSize
+            )
         } else {
             this.currentDotSize2 = CircleView.mapValueFromRangeToRange(
-                    currentProgress, 0.5f, 1f, maxDotSize * 0.3f, 0f)
+                    currentProgress, 0.5f, 1f, maxDotSize * 0.3f, 0f
+            )
         }
     }
 
@@ -143,17 +138,20 @@ class DotsView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
     private fun updateOuterDotsPosition() {
         if (currentProgress < 0.3f) {
             this.currentRadius1 = CircleView.mapValueFromRangeToRange(
-                    currentProgress, 0.0f, 0.3f, 0f, maxOuterDotsRadius * 0.8f)
+                    currentProgress, 0.0f, 0.3f, 0f, maxOuterDotsRadius * 0.8f
+            )
         } else {
             this.currentRadius1 = CircleView.mapValueFromRangeToRange(
-                    currentProgress, 0.3f, 1f, 0.8f * maxOuterDotsRadius, maxOuterDotsRadius)
+                    currentProgress, 0.3f, 1f, 0.8f * maxOuterDotsRadius, maxOuterDotsRadius
+            )
         }
 
         if (currentProgress < 0.7) {
             this.currentDotSize1 = maxDotSize
         } else {
             this.currentDotSize1 = CircleView.mapValueFromRangeToRange(
-                    currentProgress, 0.7f, 1f, maxDotSize, 0f)
+                    currentProgress, 0.7f, 1f, maxDotSize, 0f
+            )
         }
     }
 

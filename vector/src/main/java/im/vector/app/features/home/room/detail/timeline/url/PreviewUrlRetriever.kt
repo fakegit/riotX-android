@@ -1,22 +1,13 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home.room.detail.timeline.url
 
-import im.vector.app.BuildConfig
+import im.vector.app.core.resources.BuildMeta
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -25,8 +16,11 @@ import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.room.timeline.TimelineEvent
 import org.matrix.android.sdk.api.session.room.timeline.getLatestEventId
 
-class PreviewUrlRetriever(session: Session,
-                          private val coroutineScope: CoroutineScope) {
+class PreviewUrlRetriever(
+        session: Session,
+        private val coroutineScope: CoroutineScope,
+        private val buildMeta: BuildMeta,
+) {
     private val mediaService = session.mediaService()
 
     private data class EventIdPreviewUrlUiState(
@@ -75,7 +69,7 @@ class PreviewUrlRetriever(session: Session,
                     mediaService.getPreviewUrl(
                             url = urlToRetrieve,
                             timestamp = null,
-                            cacheStrategy = if (BuildConfig.DEBUG) CacheStrategy.NoCache else CacheStrategy.TtlCache(CACHE_VALIDITY, false)
+                            cacheStrategy = if (buildMeta.isDebug) CacheStrategy.NoCache else CacheStrategy.TtlCache(CACHE_VALIDITY, false)
                     )
                 }.fold(
                         {
@@ -146,7 +140,7 @@ class PreviewUrlRetriever(session: Session,
 
     companion object {
         // One week in millis
-        private const val CACHE_VALIDITY: Long = 7 * 24 * 3_600 * 1_000
+        private const val CACHE_VALIDITY = 604_800_000L // 7 * 24 * 3_600 * 1_000
 
         private val blockedDomains = listOf(
                 "https://matrix.to",

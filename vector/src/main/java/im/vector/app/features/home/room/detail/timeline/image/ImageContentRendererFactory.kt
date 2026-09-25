@@ -1,30 +1,22 @@
 /*
- * Copyright (c) 2021 New Vector Ltd
+ * Copyright 2021-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home.room.detail.timeline.image
 
 import im.vector.app.features.media.ImageContentRenderer
+import org.matrix.android.sdk.api.session.crypto.attachments.toElementToDecrypt
 import org.matrix.android.sdk.api.session.events.model.isImageMessage
 import org.matrix.android.sdk.api.session.events.model.isVideoMessage
 import org.matrix.android.sdk.api.session.events.model.toModel
 import org.matrix.android.sdk.api.session.room.model.message.MessageImageContent
 import org.matrix.android.sdk.api.session.room.model.message.MessageVideoContent
 import org.matrix.android.sdk.api.session.room.model.message.getFileUrl
+import org.matrix.android.sdk.api.session.room.model.message.getThumbnailUrl
 import org.matrix.android.sdk.api.session.room.timeline.TimelineEvent
-import org.matrix.android.sdk.internal.crypto.attachments.toElementToDecrypt
 
 fun TimelineEvent.buildImageContentRendererData(maxHeight: Int): ImageContentRenderer.Data? {
     return when {
@@ -45,19 +37,20 @@ fun TimelineEvent.buildImageContentRendererData(maxHeight: Int): ImageContentRen
                 }
         root.isVideoMessage() -> root.getClearContent().toModel<MessageVideoContent>()
                 ?.let { messageVideoContent ->
+                    val videoInfo = messageVideoContent.videoInfo
                     ImageContentRenderer.Data(
                             eventId = eventId,
                             filename = messageVideoContent.body,
-                            mimeType = messageVideoContent.mimeType,
-                            url = messageVideoContent.getFileUrl(),
-                            elementToDecrypt = messageVideoContent.encryptedFileInfo?.toElementToDecrypt(),
-                            height = messageVideoContent.videoInfo?.height,
+                            mimeType = videoInfo?.thumbnailInfo?.mimeType,
+                            url = videoInfo?.getThumbnailUrl(),
+                            elementToDecrypt = videoInfo?.thumbnailFile?.toElementToDecrypt(),
+                            height = videoInfo?.thumbnailInfo?.height,
                             maxHeight = maxHeight,
-                            width = messageVideoContent.videoInfo?.width,
+                            width = videoInfo?.thumbnailInfo?.width,
                             maxWidth = maxHeight * 2,
                             allowNonMxcUrls = false
                     )
                 }
-        else                  -> null
+        else -> null
     }
 }

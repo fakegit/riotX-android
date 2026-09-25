@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.invite
@@ -21,58 +12,42 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Parcelable
 import android.view.View
-import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
-import com.airbnb.mvrx.MvRx
+import androidx.lifecycle.lifecycleScope
+import com.airbnb.mvrx.Mavericks
 import com.airbnb.mvrx.viewModel
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
-import im.vector.app.core.error.ErrorFormatter
 import im.vector.app.core.extensions.addFragment
 import im.vector.app.core.extensions.addFragmentToBackstack
 import im.vector.app.core.platform.SimpleFragmentActivity
 import im.vector.app.core.platform.WaitingViewData
 import im.vector.app.core.utils.PERMISSIONS_FOR_MEMBERS_SEARCH
-import im.vector.app.core.utils.PERMISSION_REQUEST_CODE_READ_CONTACTS
-import im.vector.app.core.utils.allGranted
 import im.vector.app.core.utils.checkPermissions
+import im.vector.app.core.utils.onPermissionDeniedSnackbar
+import im.vector.app.core.utils.registerForPermissionsResult
 import im.vector.app.core.utils.toast
 import im.vector.app.features.contactsbook.ContactsBookFragment
-import im.vector.app.features.contactsbook.ContactsBookViewModel
-import im.vector.app.features.contactsbook.ContactsBookViewState
+import im.vector.app.features.userdirectory.PendingSelection
 import im.vector.app.features.userdirectory.UserListFragment
 import im.vector.app.features.userdirectory.UserListFragmentArgs
 import im.vector.app.features.userdirectory.UserListSharedAction
 import im.vector.app.features.userdirectory.UserListSharedActionViewModel
-import im.vector.app.features.userdirectory.UserListViewModel
-import im.vector.app.features.userdirectory.UserListViewState
+import im.vector.lib.strings.CommonStrings
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.parcelize.Parcelize
 import org.matrix.android.sdk.api.failure.Failure
 import java.net.HttpURLConnection
-import javax.inject.Inject
 
 @Parcelize
 data class InviteUsersToRoomArgs(val roomId: String) : Parcelable
 
-class InviteUsersToRoomActivity : SimpleFragmentActivity(), UserListViewModel.Factory, ContactsBookViewModel.Factory, InviteUsersToRoomViewModel.Factory {
+@AndroidEntryPoint
+class InviteUsersToRoomActivity : SimpleFragmentActivity() {
 
     private val viewModel: InviteUsersToRoomViewModel by viewModel()
     private lateinit var sharedActionViewModel: UserListSharedActionViewModel
-    @Inject lateinit var userListViewModelFactory: UserListViewModel.Factory
-    @Inject lateinit var inviteUsersToRoomViewModelFactory: InviteUsersToRoomViewModel.Factory
-    @Inject lateinit var contactsBookViewModelFactory: ContactsBookViewModel.Factory
-    @Inject lateinit var errorFormatter: ErrorFormatter
-
-    override fun injectWith(injector: ScreenComponent) {
-        super.injectWith(injector)
-        injector.inject(this)
-    }
-
-    override fun create(initialState: UserListViewState) = userListViewModelFactory.create(initialState)
-
-    override fun create(initialState: ContactsBookViewState) = contactsBookViewModelFactory.create(initialState)
-
-    override fun create(initialState: InviteUsersToRoomViewState) = inviteUsersToRoomViewModelFactory.create(initialState)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,26 +56,27 @@ class InviteUsersToRoomActivity : SimpleFragmentActivity(), UserListViewModel.Fa
 
         sharedActionViewModel = viewModelProvider.get(UserListSharedActionViewModel::class.java)
         sharedActionViewModel
-                .observe()
-                .subscribe { sharedAction ->
+                .stream()
+                .onEach { sharedAction ->
+                    @Suppress("DEPRECATION")
                     when (sharedAction) {
-                        UserListSharedAction.Close                 -> finish()
-                        UserListSharedAction.GoBack                -> onBackPressed()
-                        is UserListSharedAction.OnMenuItemSelected -> onMenuItemSelected(sharedAction)
-                        UserListSharedAction.OpenPhoneBook         -> openPhoneBook()
+                        UserListSharedAction.Close -> finish()
+                        UserListSharedAction.GoBack -> onBackPressed()
+                        is UserListSharedAction.OnMenuItemSubmitClick -> handleOnMenuItemSubmitClick(sharedAction)
+                        UserListSharedAction.OpenPhoneBook -> openPhoneBook()
                         // not exhaustive because it's a sharedAction
-                        else                                       -> {
-                        }
+                        else -> Unit
                     }
                 }
-                .disposeOnDestroy()
+                .launchIn(lifecycleScope)
         if (isFirstCreation()) {
             addFragment(
-                    R.id.container,
+                    views.container,
                     UserListFragment::class.java,
                     UserListFragmentArgs(
-                            title = getString(R.string.invite_users_to_room_title),
+                            title = getString(CommonStrings.invite_users_to_room_title),
                             menuResId = R.menu.vector_invite_users_to_room,
+                            submitMenuItemId = R.id.action_invite_users_to_room_invite,
                             excludedUserIds = viewModel.getUserIdsOfRoomMembers(),
                             showInviteActions = false
                     )
@@ -110,30 +86,34 @@ class InviteUsersToRoomActivity : SimpleFragmentActivity(), UserListViewModel.Fa
         viewModel.observeViewEvents { renderInviteEvents(it) }
     }
 
-    private fun onMenuItemSelected(action: UserListSharedAction.OnMenuItemSelected) {
-        if (action.itemId == R.id.action_invite_users_to_room_invite) {
+    private fun handleOnMenuItemSubmitClick(action: UserListSharedAction.OnMenuItemSubmitClick) {
+        val unknownUsers = action.selections.filter { it is PendingSelection.UserPendingSelection && it.isUnknownUser }
+        if (unknownUsers.isEmpty()) {
             viewModel.handle(InviteUsersToRoomAction.InviteSelectedUsers(action.selections))
+        } else {
+            MaterialAlertDialogBuilder(this)
+                    .setTitle(CommonStrings.dialog_title_confirmation)
+                    .setMessage(getString(CommonStrings.invite_unknown_users_dialog_content, unknownUsers.joinToString("\n • ", " • ") { it.getMxId() }))
+                    .setPositiveButton(CommonStrings.invite_unknown_users_dialog_submit) { _, _ ->
+                        viewModel.handle(InviteUsersToRoomAction.InviteSelectedUsers(action.selections))
+                    }
+                    .setNegativeButton(CommonStrings.action_cancel, null)
+                    .show()
         }
     }
 
     private fun openPhoneBook() {
         // Check permission first
-        if (checkPermissions(PERMISSIONS_FOR_MEMBERS_SEARCH,
-                        this,
-                        PERMISSION_REQUEST_CODE_READ_CONTACTS,
-                        0)) {
-            addFragmentToBackstack(R.id.container, ContactsBookFragment::class.java)
+        if (checkPermissions(PERMISSIONS_FOR_MEMBERS_SEARCH, this, permissionContactLauncher)) {
+            addFragmentToBackstack(views.container, ContactsBookFragment::class.java)
         }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (allGranted(grantResults)) {
-            if (requestCode == PERMISSION_REQUEST_CODE_READ_CONTACTS) {
-                doOnPostResume { addFragmentToBackstack(R.id.container, ContactsBookFragment::class.java) }
-            }
-        } else {
-            Toast.makeText(baseContext, R.string.missing_permissions_error, Toast.LENGTH_SHORT).show()
+    private val permissionContactLauncher = registerForPermissionsResult { allGranted, deniedPermanently ->
+        if (allGranted) {
+            doOnPostResume { addFragmentToBackstack(views.container, ContactsBookFragment::class.java) }
+        } else if (deniedPermanently) {
+            onPermissionDeniedSnackbar(CommonStrings.permissions_denied_add_contact)
         }
     }
 
@@ -146,20 +126,20 @@ class InviteUsersToRoomActivity : SimpleFragmentActivity(), UserListViewModel.Fa
     }
 
     private fun renderInviteLoading() {
-        updateWaitingView(WaitingViewData(getString(R.string.inviting_users_to_room)))
+        updateWaitingView(WaitingViewData(getString(CommonStrings.inviting_users_to_room)))
     }
 
     private fun renderInviteFailure(error: Throwable) {
         hideWaitingView()
         val message = if (error is Failure.ServerError && error.httpCode == HttpURLConnection.HTTP_INTERNAL_ERROR /*500*/) {
             // This error happen if the invited userId does not exist.
-            getString(R.string.invite_users_to_room_failure)
+            getString(CommonStrings.invite_users_to_room_failure)
         } else {
             errorFormatter.toHumanReadable(error)
         }
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
                 .setMessage(message)
-                .setPositiveButton(R.string.ok, null)
+                .setPositiveButton(CommonStrings.ok, null)
                 .show()
     }
 
@@ -172,7 +152,7 @@ class InviteUsersToRoomActivity : SimpleFragmentActivity(), UserListViewModel.Fa
 
         fun getIntent(context: Context, roomId: String): Intent {
             return Intent(context, InviteUsersToRoomActivity::class.java).also {
-                it.putExtra(MvRx.KEY_ARG, InviteUsersToRoomArgs(roomId))
+                it.putExtra(Mavericks.KEY_ARG, InviteUsersToRoomArgs(roomId))
             }
         }
     }

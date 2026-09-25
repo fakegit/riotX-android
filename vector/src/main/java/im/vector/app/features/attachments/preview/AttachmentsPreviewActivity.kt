@@ -1,34 +1,26 @@
 /*
- * Copyright 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.attachments.preview
 
 import android.content.Context
 import android.content.Intent
-import androidx.appcompat.widget.Toolbar
-import im.vector.app.R
+import android.view.View
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.extensions.addFragment
-import im.vector.app.core.platform.ToolbarConfigurable
 import im.vector.app.core.platform.VectorBaseActivity
 import im.vector.app.databinding.ActivitySimpleBinding
 import im.vector.app.features.themes.ActivityOtherThemes
+import im.vector.lib.core.utils.compat.getParcelableArrayListExtraCompat
+import im.vector.lib.core.utils.compat.getParcelableCompat
 import org.matrix.android.sdk.api.session.content.ContentAttachmentData
 
-class AttachmentsPreviewActivity : VectorBaseActivity<ActivitySimpleBinding>(), ToolbarConfigurable {
+@AndroidEntryPoint
+class AttachmentsPreviewActivity : VectorBaseActivity<ActivitySimpleBinding>() {
 
     companion object {
         private const val EXTRA_FRAGMENT_ARGS = "EXTRA_FRAGMENT_ARGS"
@@ -42,7 +34,7 @@ class AttachmentsPreviewActivity : VectorBaseActivity<ActivitySimpleBinding>(), 
         }
 
         fun getOutput(intent: Intent): List<ContentAttachmentData> {
-            return intent.getParcelableArrayListExtra<ContentAttachmentData>(ATTACHMENTS_PREVIEW_RESULT).orEmpty()
+            return intent.getParcelableArrayListExtraCompat<ContentAttachmentData>(ATTACHMENTS_PREVIEW_RESULT).orEmpty()
         }
 
         fun getKeepOriginalSize(intent: Intent): Boolean {
@@ -56,10 +48,13 @@ class AttachmentsPreviewActivity : VectorBaseActivity<ActivitySimpleBinding>(), 
 
     override fun getCoordinatorLayout() = views.coordinatorLayout
 
+    override val rootView: View
+        get() = views.coordinatorLayout
+
     override fun initUiAndData() {
         if (isFirstCreation()) {
-            val fragmentArgs: AttachmentsPreviewArgs = intent?.extras?.getParcelable(EXTRA_FRAGMENT_ARGS) ?: return
-            addFragment(R.id.simpleFragmentContainer, AttachmentsPreviewFragment::class.java, fragmentArgs)
+            val fragmentArgs: AttachmentsPreviewArgs = intent?.extras?.getParcelableCompat(EXTRA_FRAGMENT_ARGS) ?: return
+            addFragment(views.simpleFragmentContainer, AttachmentsPreviewFragment::class.java, fragmentArgs)
         }
     }
 
@@ -70,9 +65,5 @@ class AttachmentsPreviewActivity : VectorBaseActivity<ActivitySimpleBinding>(), 
         }
         setResult(RESULT_OK, resultIntent)
         finish()
-    }
-
-    override fun configure(toolbar: Toolbar) {
-        configureToolbar(toolbar)
     }
 }

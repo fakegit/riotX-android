@@ -16,13 +16,16 @@
 
 package org.matrix.android.sdk.internal.session
 
-import org.matrix.android.sdk.api.failure.GlobalError
+import org.matrix.android.sdk.api.extensions.tryOrNull
 import org.matrix.android.sdk.api.session.Session
+import timber.log.Timber
+import java.util.concurrent.CopyOnWriteArraySet
 import javax.inject.Inject
 
+@SessionScope
 internal class SessionListeners @Inject constructor() {
 
-    private val listeners = mutableSetOf<Session.Listener>()
+    private val listeners = CopyOnWriteArraySet<Session.Listener>()
 
     fun addListener(listener: Session.Listener) {
         synchronized(listeners) {
@@ -36,11 +39,19 @@ internal class SessionListeners @Inject constructor() {
         }
     }
 
-    fun dispatchGlobalError(globalError: GlobalError) {
+    fun dispatch(session: Session, block: (Session, Session.Listener) -> Unit) {
         synchronized(listeners) {
             listeners.forEach {
-                it.onGlobalError(globalError)
+                tryOrNull { block(session, it) }
             }
         }
     }
+}
+
+internal fun Session?.dispatchTo(sessionListeners: SessionListeners, block: (Session, Session.Listener) -> Unit) {
+    if (this == null) {
+        Timber.w("You don't have any attached session")
+        return
+    }
+    sessionListeners.dispatch(this, block)
 }

@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.widgets
@@ -26,26 +17,34 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import androidx.appcompat.app.AlertDialog
+import android.webkit.PermissionRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import com.airbnb.mvrx.Fail
-import com.airbnb.mvrx.Incomplete
 import com.airbnb.mvrx.Loading
 import com.airbnb.mvrx.Success
 import com.airbnb.mvrx.Uninitialized
 import com.airbnb.mvrx.activityViewModel
 import com.airbnb.mvrx.args
 import com.airbnb.mvrx.withState
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
 import im.vector.app.core.extensions.registerStartForActivityResult
 import im.vector.app.core.platform.OnBackPressed
 import im.vector.app.core.platform.VectorBaseFragment
+import im.vector.app.core.platform.VectorMenuProvider
+import im.vector.app.core.utils.CheckWebViewPermissionsUseCase
 import im.vector.app.core.utils.openUrlInExternalBrowser
 import im.vector.app.databinding.FragmentRoomWidgetBinding
-import im.vector.app.features.webview.WebViewEventListener
+import im.vector.app.features.settings.VectorPreferences
+import im.vector.app.features.webview.WebEventListener
+import im.vector.app.features.widgets.webview.WebviewPermissionUtils
 import im.vector.app.features.widgets.webview.clearAfterWidget
 import im.vector.app.features.widgets.webview.setupForWidget
+import im.vector.lib.core.utils.compat.resolveActivityCompat
+import im.vector.lib.strings.CommonStrings
 import kotlinx.parcelize.Parcelize
 import org.matrix.android.sdk.api.session.terms.TermsService
 import timber.log.Timber
@@ -61,10 +60,16 @@ data class WidgetArgs(
         val urlParams: Map<String, String> = emptyMap()
 ) : Parcelable
 
-class WidgetFragment @Inject constructor() :
+@AndroidEntryPoint
+class WidgetFragment :
         VectorBaseFragment<FragmentRoomWidgetBinding>(),
-        WebViewEventListener,
-        OnBackPressed {
+        WebEventListener,
+        OnBackPressed,
+        VectorMenuProvider {
+
+    @Inject lateinit var permissionUtils: WebviewPermissionUtils
+    @Inject lateinit var checkWebViewPermissionsUseCase: CheckWebViewPermissionsUseCase
+    @Inject lateinit var vectorPreferences: VectorPreferences
 
     private val fragmentArgs: WidgetArgs by args()
     private val viewModel: WidgetViewModel by activityViewModel()
@@ -75,18 +80,18 @@ class WidgetFragment @Inject constructor() :
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        setHasOptionsMenu(true)
-        views.widgetWebView.setupForWidget(this)
+        views.widgetWebView.setupForWidget(requireActivity(), checkWebViewPermissionsUseCase, this)
         if (fragmentArgs.kind.isAdmin()) {
             viewModel.getPostAPIMediator().setWebView(views.widgetWebView)
         }
         viewModel.observeViewEvents {
             Timber.v("Observed view events: $it")
             when (it) {
-                is WidgetViewEvents.DisplayTerms              -> displayTerms(it)
-                is WidgetViewEvents.OnURLFormatted            -> loadFormattedUrl(it)
+                is WidgetViewEvents.DisplayTerms -> displayTerms(it)
+                is WidgetViewEvents.OnURLFormatted -> loadFormattedUrl(it)
                 is WidgetViewEvents.DisplayIntegrationManager -> displayIntegrationManager(it)
-                is WidgetViewEvents.Failure                   -> displayErrorDialog(it.throwable)
+                is WidgetViewEvents.Failure -> displayErrorDialog(it.throwable)
+                is WidgetViewEvents.Close -> Unit
             }
         }
         viewModel.handle(WidgetAction.LoadFormattedUrl)
@@ -125,58 +130,72 @@ class WidgetFragment @Inject constructor() :
 
     override fun onPause() {
         super.onPause()
-        views.widgetWebView.let {
-            it.pauseTimers()
-            it.onPause()
+        if (fragmentArgs.kind != WidgetKind.ELEMENT_CALL) {
+            views.widgetWebView.let {
+                it.pauseTimers()
+                it.onPause()
+            }
         }
     }
 
-    override fun onPrepareOptionsMenu(menu: Menu) = withState(viewModel) { state ->
-        val widget = state.asyncWidget()
-        menu.findItem(R.id.action_edit)?.isVisible = state.widgetKind != WidgetKind.INTEGRATION_MANAGER
-        if (widget == null) {
-            menu.findItem(R.id.action_refresh)?.isVisible = false
-            menu.findItem(R.id.action_widget_open_ext)?.isVisible = false
-            menu.findItem(R.id.action_delete)?.isVisible = false
-            menu.findItem(R.id.action_revoke)?.isVisible = false
-        } else {
-            menu.findItem(R.id.action_refresh)?.isVisible = true
-            menu.findItem(R.id.action_widget_open_ext)?.isVisible = true
-            menu.findItem(R.id.action_delete)?.isVisible = state.canManageWidgets && widget.isAddedByMe
-            menu.findItem(R.id.action_revoke)?.isVisible = state.status == WidgetStatus.WIDGET_ALLOWED && !widget.isAddedByMe
+    override fun getMenuRes() = R.menu.menu_widget
+
+    override fun handlePrepareMenu(menu: Menu) {
+        withState(viewModel) { state ->
+            val widget = state.asyncWidget()
+            menu.findItem(R.id.action_edit)?.isVisible = state.widgetKind != WidgetKind.INTEGRATION_MANAGER
+            if (widget == null) {
+                menu.findItem(R.id.action_refresh)?.isVisible = false
+                menu.findItem(R.id.action_widget_open_ext)?.isVisible = false
+                menu.findItem(R.id.action_delete)?.isVisible = false
+                menu.findItem(R.id.action_revoke)?.isVisible = false
+            } else {
+                menu.findItem(R.id.action_refresh)?.isVisible = true
+                menu.findItem(R.id.action_widget_open_ext)?.isVisible = true
+                menu.findItem(R.id.action_delete)?.isVisible = state.canManageWidgets && widget.isAddedByMe
+                menu.findItem(R.id.action_revoke)?.isVisible = state.status == WidgetStatus.WIDGET_ALLOWED && !widget.isAddedByMe
+            }
         }
-        super.onPrepareOptionsMenu(menu)
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean = withState(viewModel) { state ->
-        when (item.itemId) {
-            R.id.action_edit            -> {
-                navigator.openIntegrationManager(
-                        requireContext(),
-                        integrationManagerActivityResultLauncher,
-                        state.roomId,
-                        state.widgetId,
-                        state.widgetKind.screenId)
-                return@withState true
-            }
-            R.id.action_delete          -> {
-                viewModel.handle(WidgetAction.DeleteWidget)
-                return@withState true
-            }
-            R.id.action_refresh         -> if (state.formattedURL.complete) {
-                views.widgetWebView.reload()
-                return@withState true
-            }
-            R.id.action_widget_open_ext -> if (state.formattedURL.complete) {
-                openUrlInExternalBrowser(requireContext(), state.formattedURL.invoke())
-                return@withState true
-            }
-            R.id.action_revoke          -> if (state.status == WidgetStatus.WIDGET_ALLOWED) {
-                viewModel.handle(WidgetAction.RevokeWidget)
-                return@withState true
+    override fun handleMenuItemSelected(item: MenuItem): Boolean {
+        return withState(viewModel) { state ->
+            return@withState when (item.itemId) {
+                R.id.action_edit -> {
+                    navigator.openIntegrationManager(
+                            requireContext(),
+                            integrationManagerActivityResultLauncher,
+                            state.roomId,
+                            state.widgetId,
+                            state.widgetKind.screenId
+                    )
+                    true
+                }
+                R.id.action_delete -> {
+                    deleteWidget()
+                    true
+                }
+                R.id.action_refresh -> {
+                    if (state.formattedURL.complete) {
+                        views.widgetWebView.reload()
+                    }
+                    true
+                }
+                R.id.action_widget_open_ext -> {
+                    if (state.formattedURL.complete) {
+                        openUrlInExternalBrowser(requireContext(), state.formattedURL.invoke())
+                    }
+                    true
+                }
+                R.id.action_revoke -> {
+                    if (state.status == WidgetStatus.WIDGET_ALLOWED) {
+                        revokeWidget()
+                    }
+                    true
+                }
+                else -> false
             }
         }
-        return@withState super.onOptionsItemSelected(item)
     }
 
     override fun onBackPressed(toolbarButton: Boolean): Boolean = withState(viewModel) { state ->
@@ -191,41 +210,45 @@ class WidgetFragment @Inject constructor() :
 
     override fun invalidate() = withState(viewModel) { state ->
         Timber.v("Invalidate state: $state")
-        when (state.formattedURL) {
-            is Incomplete -> {
+        when (val formattedUrl = state.formattedURL) {
+            Uninitialized,
+            is Loading -> {
                 setStateError(null)
                 views.widgetWebView.isInvisible = true
                 views.widgetProgressBar.isIndeterminate = true
                 views.widgetProgressBar.isVisible = true
             }
-            is Success    -> {
+            is Success -> {
+                if (views.widgetWebView.url == null) {
+                    loadFormattedUrl(formattedUrl())
+                }
                 setStateError(null)
                 when (state.webviewLoadedUrl) {
                     Uninitialized -> {
                         views.widgetWebView.isInvisible = true
                     }
-                    is Loading    -> {
+                    is Loading -> {
                         setStateError(null)
                         views.widgetWebView.isInvisible = false
                         views.widgetProgressBar.isIndeterminate = true
                         views.widgetProgressBar.isVisible = true
                     }
-                    is Success    -> {
+                    is Success -> {
                         views.widgetWebView.isInvisible = false
                         views.widgetProgressBar.isVisible = false
                         setStateError(null)
                     }
-                    is Fail       -> {
+                    is Fail -> {
                         views.widgetProgressBar.isInvisible = true
                         setStateError(state.webviewLoadedUrl.error.message)
                     }
                 }
             }
-            is Fail       -> {
+            is Fail -> {
                 // we need to show Error
                 views.widgetWebView.isInvisible = true
                 views.widgetProgressBar.isVisible = false
-                setStateError(state.formattedURL.error.message)
+                setStateError(formattedUrl.error.message)
             }
         }
     }
@@ -237,7 +260,7 @@ class WidgetFragment @Inject constructor() :
                 val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
                 if (intent != null) {
                     val packageManager: PackageManager = context.packageManager
-                    val info = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                    val info = packageManager.resolveActivityCompat(intent, PackageManager.MATCH_DEFAULT_ONLY)
                     if (info != null) {
                         context.startActivity(intent)
                     } else {
@@ -269,6 +292,21 @@ class WidgetFragment @Inject constructor() :
         viewModel.handle(WidgetAction.OnWebViewLoadingError(url, true, errorCode, description))
     }
 
+    private val permissionResultLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        permissionUtils.onPermissionResult(result)
+    }
+
+    override fun onPermissionRequest(request: PermissionRequest) {
+        permissionUtils.promptForPermissions(
+                title = CommonStrings.room_widget_resource_permission_title,
+                request = request,
+                context = requireContext(),
+                activity = requireActivity(),
+                activityResultLauncher = permissionResultLauncher,
+                autoApprove = fragmentArgs.kind == WidgetKind.ELEMENT_CALL && vectorPreferences.labsEnableElementCallPermissionShortcuts()
+        )
+    }
+
     private fun displayTerms(displayTerms: WidgetViewEvents.DisplayTerms) {
         navigator.openTerms(
                 context = requireContext(),
@@ -280,8 +318,12 @@ class WidgetFragment @Inject constructor() :
     }
 
     private fun loadFormattedUrl(event: WidgetViewEvents.OnURLFormatted) {
+        loadFormattedUrl(event.formattedURL)
+    }
+
+    private fun loadFormattedUrl(formattedUrl: String) {
         views.widgetWebView.clearHistory()
-        views.widgetWebView.loadUrl(event.formattedURL)
+        views.widgetWebView.loadUrl(formattedUrl)
     }
 
     private fun setStateError(message: String?) {
@@ -292,7 +334,7 @@ class WidgetFragment @Inject constructor() :
             views.widgetProgressBar.isVisible = false
             views.widgetErrorLayout.isVisible = true
             views.widgetWebView.isInvisible = true
-            views.widgetErrorText.text = getString(R.string.room_widget_failed_to_load, message)
+            views.widgetErrorText.text = getString(CommonStrings.room_widget_failed_to_load, message)
         }
     }
 
@@ -306,17 +348,17 @@ class WidgetFragment @Inject constructor() :
         )
     }
 
-    fun deleteWidget() {
-        AlertDialog.Builder(requireContext())
-                .setMessage(R.string.widget_delete_message_confirmation)
-                .setPositiveButton(R.string.remove) { _, _ ->
+    private fun deleteWidget() {
+        MaterialAlertDialogBuilder(requireContext())
+                .setMessage(CommonStrings.widget_delete_message_confirmation)
+                .setPositiveButton(CommonStrings.action_remove) { _, _ ->
                     viewModel.handle(WidgetAction.DeleteWidget)
                 }
-                .setNegativeButton(R.string.cancel, null)
+                .setNegativeButton(CommonStrings.action_cancel, null)
                 .show()
     }
 
-    fun revokeWidget() {
+    private fun revokeWidget() {
         viewModel.handle(WidgetAction.RevokeWidget)
     }
 }

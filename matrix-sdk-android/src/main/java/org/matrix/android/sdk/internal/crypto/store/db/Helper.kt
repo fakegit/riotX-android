@@ -16,88 +16,33 @@
 
 package org.matrix.android.sdk.internal.crypto.store.db
 
-import android.util.Base64
 import io.realm.Realm
 import io.realm.RealmConfiguration
-import io.realm.RealmObject
-import java.io.ByteArrayOutputStream
-import java.io.ObjectOutputStream
-import java.util.zip.GZIPInputStream
-import java.util.zip.GZIPOutputStream
+import timber.log.Timber
+import kotlin.system.measureTimeMillis
 
 /**
- * Get realm, invoke the action, close realm, and return the result of the action
+ * Get realm, invoke the action, close realm, and return the result of the action.
  */
-fun <T> doWithRealm(realmConfiguration: RealmConfiguration, action: (Realm) -> T): T {
+internal fun <T> doWithRealm(realmConfiguration: RealmConfiguration, action: (Realm) -> T): T {
     return Realm.getInstance(realmConfiguration).use { realm ->
         action.invoke(realm)
     }
 }
 
 /**
- * Get realm, do the query, copy from realm, close realm, and return the copied result
+ * Get realm instance, invoke the action in a transaction and close realm.
  */
-fun <T : RealmObject> doRealmQueryAndCopy(realmConfiguration: RealmConfiguration, action: (Realm) -> T?): T? {
-    return Realm.getInstance(realmConfiguration).use { realm ->
-        action.invoke(realm)?.let { realm.copyFromRealm(it) }
-    }
+internal fun doRealmTransaction(tag: String, realmConfiguration: RealmConfiguration, action: (Realm) -> Unit) {
+    measureTimeMillis {
+        Realm.getInstance(realmConfiguration).use { realm ->
+            realm.executeTransaction { action.invoke(it) }
+        }
+    }.also { Timber.w("doRealmTransaction for $tag took $it millis") }
 }
 
-/**
- * Get realm, do the list query, copy from realm, close realm, and return the copied result
- */
-fun <T : RealmObject> doRealmQueryAndCopyList(realmConfiguration: RealmConfiguration, action: (Realm) -> Iterable<T>): Iterable<T> {
-    return Realm.getInstance(realmConfiguration).use { realm ->
-        action.invoke(realm).let { realm.copyFromRealm(it) }
-    }
-}
-
-/**
- * Get realm instance, invoke the action in a transaction and close realm
- */
-fun doRealmTransaction(realmConfiguration: RealmConfiguration, action: (Realm) -> Unit) {
-    Realm.getInstance(realmConfiguration).use { realm ->
-        realm.executeTransaction { action.invoke(it) }
-    }
-}
-
-fun doRealmTransactionAsync(realmConfiguration: RealmConfiguration, action: (Realm) -> Unit) {
+internal fun doRealmTransactionAsync(realmConfiguration: RealmConfiguration, action: (Realm) -> Unit) {
     Realm.getInstance(realmConfiguration).use { realm ->
         realm.executeTransactionAsync { action.invoke(it) }
-    }
-}
-
-/**
- * Serialize any Serializable object, zip it and convert to Base64 String
- */
-fun serializeForRealm(o: Any?): String? {
-    if (o == null) {
-        return null
-    }
-
-    val baos = ByteArrayOutputStream()
-    val gzis = GZIPOutputStream(baos)
-    val out = ObjectOutputStream(gzis)
-    out.use {
-        it.writeObject(o)
-    }
-    return Base64.encodeToString(baos.toByteArray(), Base64.DEFAULT)
-}
-
-/**
- * Do the opposite of serializeForRealm.
- */
-@Suppress("UNCHECKED_CAST")
-fun <T> deserializeFromRealm(string: String?): T? {
-    if (string == null) {
-        return null
-    }
-    val decodedB64 = Base64.decode(string.toByteArray(), Base64.DEFAULT)
-
-    val bais = decodedB64.inputStream()
-    val gzis = GZIPInputStream(bais)
-    val ois = SafeObjectInputStream(gzis)
-    return ois.use {
-        it.readObject() as T
     }
 }

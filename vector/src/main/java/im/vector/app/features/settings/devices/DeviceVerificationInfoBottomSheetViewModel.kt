@@ -1,54 +1,42 @@
 /*
- * Copyright 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.settings.devices
 
-import com.airbnb.mvrx.FragmentViewModelContext
-import com.airbnb.mvrx.Loading
-import com.airbnb.mvrx.MvRxViewModelFactory
-import com.airbnb.mvrx.ViewModelContext
+import com.airbnb.mvrx.MavericksViewModelFactory
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.EmptyAction
 import im.vector.app.core.platform.EmptyViewEvents
 import im.vector.app.core.platform.VectorViewModel
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.session.Session
-import org.matrix.android.sdk.internal.crypto.model.rest.DeviceInfo
-import org.matrix.android.sdk.rx.rx
+import org.matrix.android.sdk.api.session.crypto.model.DeviceInfo
+import org.matrix.android.sdk.flow.flow
 
-class DeviceVerificationInfoBottomSheetViewModel @AssistedInject constructor(@Assisted initialState: DeviceVerificationInfoBottomSheetViewState,
-                                                                             @Assisted val deviceId: String,
-                                                                             val session: Session
+class DeviceVerificationInfoBottomSheetViewModel @AssistedInject constructor(
+        @Assisted initialState: DeviceVerificationInfoBottomSheetViewState,
+        val session: Session
 ) : VectorViewModel<DeviceVerificationInfoBottomSheetViewState, EmptyAction, EmptyViewEvents>(initialState) {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: DeviceVerificationInfoBottomSheetViewState, deviceId: String): DeviceVerificationInfoBottomSheetViewModel
+    interface Factory : MavericksAssistedViewModelFactory<DeviceVerificationInfoBottomSheetViewModel, DeviceVerificationInfoBottomSheetViewState> {
+        override fun create(initialState: DeviceVerificationInfoBottomSheetViewState): DeviceVerificationInfoBottomSheetViewModel
     }
 
-    init {
+    companion object : MavericksViewModelFactory<DeviceVerificationInfoBottomSheetViewModel, DeviceVerificationInfoBottomSheetViewState>
+    by hiltMavericksViewModelFactory()
 
-        setState {
-            copy(
-                    hasAccountCrossSigning = session.cryptoService().crossSigningService().isCrossSigningInitialized(),
-                    accountCrossSigningIsTrusted = session.cryptoService().crossSigningService().isCrossSigningVerified(),
-                    isRecoverySetup = session.sharedSecretStorageService.isRecoverySetup()
-            )
-        }
-        session.rx().liveCrossSigningInfo(session.myUserId)
+    init {
+        initState()
+        session.flow().liveCrossSigningInfo(session.myUserId)
                 .execute {
                     copy(
                             hasAccountCrossSigning = it.invoke()?.getOrNull() != null,
@@ -56,9 +44,9 @@ class DeviceVerificationInfoBottomSheetViewModel @AssistedInject constructor(@As
                     )
                 }
 
-        session.rx().liveUserCryptoDevices(session.myUserId)
+        session.flow().liveUserCryptoDevices(session.myUserId)
                 .map { list ->
-                    list.firstOrNull { it.deviceId == deviceId }
+                    list.firstOrNull { it.deviceId == initialState.deviceId }
                 }
                 .execute {
                     copy(
@@ -67,7 +55,7 @@ class DeviceVerificationInfoBottomSheetViewModel @AssistedInject constructor(@As
                     )
                 }
 
-        session.rx().liveUserCryptoDevices(session.myUserId)
+        session.flow().liveUserCryptoDevices(session.myUserId)
                 .map { it.size }
                 .execute {
                     copy(
@@ -75,27 +63,27 @@ class DeviceVerificationInfoBottomSheetViewModel @AssistedInject constructor(@As
                     )
                 }
 
-        setState {
-            copy(deviceInfo = Loading())
-        }
-
-        session.rx().liveMyDevicesInfo()
+        session.flow().liveMyDevicesInfo()
                 .map { devices ->
-                    devices.firstOrNull { it.deviceId == deviceId } ?: DeviceInfo(deviceId = deviceId)
+                    devices.firstOrNull { it.deviceId == initialState.deviceId } ?: DeviceInfo(deviceId = initialState.deviceId)
                 }
                 .execute {
                     copy(deviceInfo = it)
                 }
     }
 
-    companion object : MvRxViewModelFactory<DeviceVerificationInfoBottomSheetViewModel, DeviceVerificationInfoBottomSheetViewState> {
-
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: DeviceVerificationInfoBottomSheetViewState)
-                : DeviceVerificationInfoBottomSheetViewModel? {
-            val fragment: DeviceVerificationInfoBottomSheet = (viewModelContext as FragmentViewModelContext).fragment()
-            val args = viewModelContext.args<DeviceVerificationInfoArgs>()
-            return fragment.deviceVerificationInfoViewModelFactory.create(state, args.deviceId)
+    private fun initState() {
+        viewModelScope.launch {
+            val hasAccountCrossSigning = session.cryptoService().crossSigningService().isCrossSigningInitialized()
+            val accountCrossSigningIsTrusted = session.cryptoService().crossSigningService().isCrossSigningVerified()
+            val isRecoverySetup = session.sharedSecretStorageService().isRecoverySetup()
+            setState {
+                copy(
+                        hasAccountCrossSigning = hasAccountCrossSigning,
+                        accountCrossSigningIsTrusted = accountCrossSigningIsTrusted,
+                        isRecoverySetup = isRecoverySetup
+                )
+            }
         }
     }
 

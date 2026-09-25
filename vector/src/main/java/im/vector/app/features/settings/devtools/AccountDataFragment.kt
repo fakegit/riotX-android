@@ -1,50 +1,41 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.settings.devtools
 
-import android.content.DialogInterface
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.airbnb.mvrx.fragmentViewModel
 import com.airbnb.mvrx.withState
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
-import im.vector.app.core.dialogs.withColoredButton
 import im.vector.app.core.extensions.cleanup
 import im.vector.app.core.extensions.configureWith
 import im.vector.app.core.platform.VectorBaseFragment
 import im.vector.app.core.resources.ColorProvider
 import im.vector.app.core.utils.createJSonViewerStyleProvider
 import im.vector.app.databinding.FragmentGenericRecyclerBinding
-
+import im.vector.lib.strings.CommonStrings
 import org.billcarsonfr.jsonviewer.JSonViewerDialog
 import org.matrix.android.sdk.api.session.accountdata.UserAccountDataEvent
-import org.matrix.android.sdk.internal.di.MoshiProvider
+import org.matrix.android.sdk.api.util.MatrixJsonParser
 import javax.inject.Inject
 
-class AccountDataFragment @Inject constructor(
-        val viewModelFactory: AccountDataViewModel.Factory,
-        private val epoxyController: AccountDataEpoxyController,
-        private val colorProvider: ColorProvider
-) : VectorBaseFragment<FragmentGenericRecyclerBinding>(),
+@AndroidEntryPoint
+class AccountDataFragment :
+        VectorBaseFragment<FragmentGenericRecyclerBinding>(),
         AccountDataEpoxyController.InteractionListener {
+
+    @Inject lateinit var epoxyController: AccountDataEpoxyController
+    @Inject lateinit var colorProvider: ColorProvider
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentGenericRecyclerBinding {
         return FragmentGenericRecyclerBinding.inflate(inflater, container, false)
@@ -54,7 +45,7 @@ class AccountDataFragment @Inject constructor(
 
     override fun onResume() {
         super.onResume()
-        (activity as? AppCompatActivity)?.supportActionBar?.setTitle(R.string.settings_account_data)
+        (activity as? AppCompatActivity)?.supportActionBar?.setTitle(CommonStrings.settings_account_data)
     }
 
     override fun invalidate() = withState(viewModel) { state ->
@@ -63,7 +54,7 @@ class AccountDataFragment @Inject constructor(
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        views.genericRecyclerView.configureWith(epoxyController, showDivider = true)
+        views.genericRecyclerView.configureWith(epoxyController, dividerDrawable = R.drawable.divider_horizontal)
         epoxyController.interactionListener = this
     }
 
@@ -74,7 +65,7 @@ class AccountDataFragment @Inject constructor(
     }
 
     override fun didTap(data: UserAccountDataEvent) {
-        val jsonString = MoshiProvider.providesMoshi()
+        val jsonString = MatrixJsonParser.getMoshi()
                 .adapter(UserAccountDataEvent::class.java)
                 .toJson(data)
         JSonViewerDialog.newInstance(
@@ -85,14 +76,13 @@ class AccountDataFragment @Inject constructor(
     }
 
     override fun didLongTap(data: UserAccountDataEvent) {
-        AlertDialog.Builder(requireActivity())
-                .setTitle(R.string.delete)
-                .setMessage(getString(R.string.delete_account_data_warning, data.type))
-                .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(R.string.delete) { _, _ ->
+        MaterialAlertDialogBuilder(requireActivity(), im.vector.lib.ui.styles.R.style.ThemeOverlay_Vector_MaterialAlertDialog_Destructive)
+                .setTitle(CommonStrings.action_delete)
+                .setMessage(getString(CommonStrings.delete_account_data_warning, data.type))
+                .setNegativeButton(CommonStrings.action_cancel, null)
+                .setPositiveButton(CommonStrings.action_delete) { _, _ ->
                     viewModel.handle(AccountDataAction.DeleteAccountData(data.type))
                 }
                 .show()
-                .withColoredButton(DialogInterface.BUTTON_POSITIVE)
     }
 }

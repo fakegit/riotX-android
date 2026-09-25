@@ -1,74 +1,41 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.settings.ignored
 
-import androidx.lifecycle.viewModelScope
-import com.airbnb.mvrx.Async
-import com.airbnb.mvrx.Fail
-import com.airbnb.mvrx.FragmentViewModelContext
-import com.airbnb.mvrx.Loading
-import com.airbnb.mvrx.MvRxState
-import com.airbnb.mvrx.MvRxViewModelFactory
-import com.airbnb.mvrx.Success
-import com.airbnb.mvrx.Uninitialized
-import com.airbnb.mvrx.ViewModelContext
+import com.airbnb.mvrx.MavericksViewModelFactory
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.VectorViewModel
-import im.vector.app.core.platform.VectorViewModelAction
 import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.session.Session
-import org.matrix.android.sdk.api.session.user.model.User
-import org.matrix.android.sdk.rx.rx
+import org.matrix.android.sdk.flow.flow
 
-data class IgnoredUsersViewState(
-        val ignoredUsers: List<User> = emptyList(),
-        val unIgnoreRequest: Async<Unit> = Uninitialized
-) : MvRxState
-
-sealed class IgnoredUsersAction : VectorViewModelAction {
-    data class UnIgnore(val userId: String) : IgnoredUsersAction()
-}
-
-class IgnoredUsersViewModel @AssistedInject constructor(@Assisted initialState: IgnoredUsersViewState,
-                                                        private val session: Session)
-    : VectorViewModel<IgnoredUsersViewState, IgnoredUsersAction, IgnoredUsersViewEvents>(initialState) {
+class IgnoredUsersViewModel @AssistedInject constructor(
+        @Assisted initialState: IgnoredUsersViewState,
+        private val session: Session
+) : VectorViewModel<IgnoredUsersViewState, IgnoredUsersAction, IgnoredUsersViewEvents>(initialState) {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: IgnoredUsersViewState): IgnoredUsersViewModel
+    interface Factory : MavericksAssistedViewModelFactory<IgnoredUsersViewModel, IgnoredUsersViewState> {
+        override fun create(initialState: IgnoredUsersViewState): IgnoredUsersViewModel
     }
 
-    companion object : MvRxViewModelFactory<IgnoredUsersViewModel, IgnoredUsersViewState> {
-
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: IgnoredUsersViewState): IgnoredUsersViewModel? {
-            val ignoredUsersFragment: VectorSettingsIgnoredUsersFragment = (viewModelContext as FragmentViewModelContext).fragment()
-            return ignoredUsersFragment.ignoredUsersViewModelFactory.create(state)
-        }
-    }
+    companion object : MavericksViewModelFactory<IgnoredUsersViewModel, IgnoredUsersViewState> by hiltMavericksViewModelFactory()
 
     init {
         observeIgnoredUsers()
     }
 
     private fun observeIgnoredUsers() {
-        session.rx()
+        session.flow()
                 .liveIgnoredUsers()
                 .execute { async ->
                     copy(
@@ -84,20 +51,16 @@ class IgnoredUsersViewModel @AssistedInject constructor(@Assisted initialState: 
     }
 
     private fun handleUnIgnore(action: IgnoredUsersAction.UnIgnore) {
-        setState {
-            copy(
-                    unIgnoreRequest = Loading()
-            )
-        }
-
+        setState { copy(isLoading = true) }
         viewModelScope.launch {
-            val result = runCatching { session.unIgnoreUserIds(listOf(action.userId)) }
-            setState {
-                copy(
-                        unIgnoreRequest = result.fold(::Success, ::Fail)
-                )
+            val viewEvent = try {
+                session.userService().unIgnoreUserIds(listOf(action.userId))
+                IgnoredUsersViewEvents.Success
+            } catch (throwable: Throwable) {
+                IgnoredUsersViewEvents.Failure(throwable)
             }
-            result.onFailure { _viewEvents.post(IgnoredUsersViewEvents.Failure(it)) }
+            setState { copy(isLoading = false) }
+            _viewEvents.post(viewEvent)
         }
     }
 }

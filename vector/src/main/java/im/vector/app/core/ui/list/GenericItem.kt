@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.core.ui.list
 
@@ -25,9 +16,12 @@ import androidx.core.view.isVisible
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
 import im.vector.app.R
+import im.vector.app.core.epoxy.ClickListener
 import im.vector.app.core.epoxy.VectorEpoxyHolder
 import im.vector.app.core.epoxy.VectorEpoxyModel
+import im.vector.app.core.epoxy.onClick
 import im.vector.app.core.extensions.setTextOrHide
+import im.vector.lib.core.utils.epoxy.charsequence.EpoxyCharSequence
 
 /**
  * A generic list item.
@@ -35,26 +29,17 @@ import im.vector.app.core.extensions.setTextOrHide
  * Can display an accessory on the right, that can be an image or an indeterminate progress.
  * If provided with an action, will display a button at the bottom of the list item.
  */
-@EpoxyModelClass(layout = R.layout.item_generic_list)
-abstract class GenericItem : VectorEpoxyModel<GenericItem.Holder>() {
-
-    enum class STYLE {
-        BIG_TEXT,
-        NORMAL_TEXT
-    }
-
-    class Action(var title: String) {
-        var perform: Runnable? = null
-    }
+@EpoxyModelClass
+abstract class GenericItem : VectorEpoxyModel<GenericItem.Holder>(R.layout.item_generic_list) {
 
     @EpoxyAttribute
-    var title: CharSequence? = null
+    var title: EpoxyCharSequence? = null
 
     @EpoxyAttribute
-    var description: CharSequence? = null
+    var description: EpoxyCharSequence? = null
 
     @EpoxyAttribute
-    var style: STYLE = STYLE.NORMAL_TEXT
+    var style: ItemStyle = ItemStyle.NORMAL_TEXT
 
     @EpoxyAttribute
     @DrawableRes
@@ -73,12 +58,12 @@ abstract class GenericItem : VectorEpoxyModel<GenericItem.Holder>() {
     @EpoxyAttribute
     var destructiveButtonAction: Action? = null
 
-    @EpoxyAttribute
-    var itemClickAction: Action? = null
+    @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
+    var itemClickAction: ClickListener? = null
 
     override fun bind(holder: Holder) {
         super.bind(holder)
-        holder.titleText.setTextOrHide(title)
+        holder.titleText.setTextOrHide(title?.charSequence)
 
         if (titleIconResourceId != -1) {
             holder.titleIcon.setImageResource(titleIconResourceId)
@@ -87,12 +72,9 @@ abstract class GenericItem : VectorEpoxyModel<GenericItem.Holder>() {
             holder.titleIcon.isVisible = false
         }
 
-        when (style) {
-            STYLE.BIG_TEXT    -> holder.titleText.textSize = 18f
-            STYLE.NORMAL_TEXT -> holder.titleText.textSize = 14f
-        }
+        holder.titleText.textSize = style.toTextSize()
 
-        holder.descriptionText.setTextOrHide(description)
+        holder.descriptionText.setTextOrHide(description?.charSequence)
 
         if (hasIndeterminateProcess) {
             holder.progressBar.isVisible = true
@@ -108,18 +90,12 @@ abstract class GenericItem : VectorEpoxyModel<GenericItem.Holder>() {
         }
 
         holder.actionButton.setTextOrHide(buttonAction?.title)
-        holder.actionButton.setOnClickListener {
-            buttonAction?.perform?.run()
-        }
+        holder.actionButton.onClick(buttonAction?.listener)
 
         holder.destructiveButton.setTextOrHide(destructiveButtonAction?.title)
-        holder.destructiveButton.setOnClickListener {
-            destructiveButtonAction?.perform?.run()
-        }
+        holder.destructiveButton.onClick(destructiveButtonAction?.listener)
 
-        holder.root.setOnClickListener {
-            itemClickAction?.perform?.run()
-        }
+        holder.root.onClick(itemClickAction)
     }
 
     class Holder : VectorEpoxyHolder() {

@@ -18,7 +18,7 @@ package org.matrix.android.sdk.api.auth.data
 
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
-import org.matrix.android.sdk.internal.util.md5
+import org.matrix.android.sdk.api.util.md5
 
 /**
  * This data class hold credentials user data.
@@ -37,7 +37,7 @@ data class Credentials(
          */
         @Json(name = "access_token") val accessToken: String,
         /**
-         * Not documented
+         * Not documented.
          */
         @Json(name = "refresh_token") val refreshToken: String?,
         /**
@@ -49,7 +49,7 @@ data class Credentials(
         /**
          * ID of the logged-in device. Will be the same as the corresponding parameter in the request, if one was specified.
          */
-        @Json(name = "device_id") val deviceId: String?,
+        @Json(name = "device_id") val deviceId: String,
         /**
          * Optional client configuration provided by the server. If present, clients SHOULD use the provided object to
          * reconfigure themselves, optionally validating the URLs within.
@@ -59,5 +59,5 @@ data class Credentials(
 )
 
 internal fun Credentials.sessionId(): String {
-    return (if (deviceId.isNullOrBlank()) userId else "$userId|$deviceId").md5()
+    return (if (deviceId.isBlank()) userId else "$userId|$deviceId").md5()
 }

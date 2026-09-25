@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.invite
@@ -21,19 +12,19 @@ import android.util.AttributeSet
 import android.view.View
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.view.updateLayoutParams
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
-import im.vector.app.core.di.HasScreenInjector
-import im.vector.app.core.platform.ButtonStateView
 import im.vector.app.databinding.VectorInviteViewBinding
 import im.vector.app.features.home.AvatarRenderer
-
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.session.room.members.ChangeMembershipState
 import org.matrix.android.sdk.api.session.room.model.RoomMemberSummary
 import org.matrix.android.sdk.api.util.toMatrixItem
 import javax.inject.Inject
 
-class VectorInviteView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null, defStyle: Int = 0)
-    : ConstraintLayout(context, attrs, defStyle) {
+@AndroidEntryPoint
+class VectorInviteView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null, defStyle: Int = 0) :
+        ConstraintLayout(context, attrs, defStyle) {
 
     interface Callback {
         fun onAcceptInvite()
@@ -51,30 +42,10 @@ class VectorInviteView @JvmOverloads constructor(context: Context, attrs: Attrib
     var callback: Callback? = null
 
     init {
-        if (context is HasScreenInjector) {
-            context.injector().inject(this)
-        }
         inflate(context, R.layout.vector_invite_view, this)
         views = VectorInviteViewBinding.bind(this)
-        views.inviteAcceptView.callback = object : ButtonStateView.Callback {
-            override fun onButtonClicked() {
-                callback?.onAcceptInvite()
-            }
-
-            override fun onRetryClicked() {
-                callback?.onAcceptInvite()
-            }
-        }
-
-        views.inviteRejectView.callback = object : ButtonStateView.Callback {
-            override fun onButtonClicked() {
-                callback?.onRejectInvite()
-            }
-
-            override fun onRetryClicked() {
-                callback?.onRejectInvite()
-            }
-        }
+        views.inviteAcceptView.commonClicked = { callback?.onAcceptInvite() }
+        views.inviteRejectView.commonClicked = { callback?.onRejectInvite() }
     }
 
     fun render(sender: RoomMemberSummary, mode: Mode = Mode.LARGE, changeMembershipState: ChangeMembershipState) {
@@ -83,13 +54,13 @@ class VectorInviteView @JvmOverloads constructor(context: Context, attrs: Attrib
             avatarRenderer.render(sender.toMatrixItem(), views.inviteAvatarView)
             views.inviteIdentifierView.text = sender.userId
             views.inviteNameView.text = sender.displayName
-            views.inviteLabelView.text = context.getString(R.string.send_you_invite)
+            views.inviteLabelView.text = context.getString(CommonStrings.send_you_invite)
         } else {
             updateLayoutParams { height = LayoutParams.WRAP_CONTENT }
             views.inviteAvatarView.visibility = View.GONE
             views.inviteIdentifierView.visibility = View.GONE
             views.inviteNameView.visibility = View.GONE
-            views.inviteLabelView.text = context.getString(R.string.invited_by, sender.userId)
+            views.inviteLabelView.text = context.getString(CommonStrings.invited_by, sender.userId)
         }
         InviteButtonStateBinder.bind(views.inviteAcceptView, views.inviteRejectView, changeMembershipState)
     }

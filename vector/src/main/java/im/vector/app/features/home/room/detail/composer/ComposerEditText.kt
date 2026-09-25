@@ -1,18 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home.room.detail.composer
@@ -24,41 +14,65 @@ import android.text.Editable
 import android.util.AttributeSet
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
+import androidx.annotation.RequiresApi
+import androidx.appcompat.widget.AppCompatEditText
+import androidx.core.view.ViewCompat
 import androidx.core.view.inputmethod.EditorInfoCompat
 import androidx.core.view.inputmethod.InputConnectionCompat
-import com.vanniktech.emoji.EmojiEditText
 import im.vector.app.core.extensions.ooi
 import im.vector.app.core.platform.SimpleTextWatcher
+import im.vector.app.features.home.room.detail.composer.images.UriContentListener
 import im.vector.app.features.html.PillImageSpan
 import timber.log.Timber
 
-class ComposerEditText @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = android.R.attr.editTextStyle)
-    : EmojiEditText(context, attrs, defStyleAttr) {
+class ComposerEditText @JvmOverloads constructor(
+        context: Context,
+        attrs: AttributeSet? = null,
+        defStyleAttr: Int = android.R.attr.editTextStyle
+) : AppCompatEditText(context, attrs, defStyleAttr) {
 
     interface Callback {
         fun onRichContentSelected(contentUri: Uri): Boolean
+        fun onTextChanged(text: CharSequence)
     }
 
     var callback: Callback? = null
 
-    override fun onCreateInputConnection(editorInfo: EditorInfo): InputConnection {
-        val ic: InputConnection = super.onCreateInputConnection(editorInfo)
-        EditorInfoCompat.setContentMimeTypes(editorInfo, arrayOf("*/*"))
+    override fun onCreateInputConnection(editorInfo: EditorInfo): InputConnection? {
+        var ic = super.onCreateInputConnection(editorInfo) ?: return null
+        val mimeTypes = ViewCompat.getOnReceiveContentMimeTypes(this) ?: arrayOf("image/*")
 
-        val callback =
-                InputConnectionCompat.OnCommitContentListener { inputContentInfo, flags, _ ->
-                    val lacksPermission = (flags and
-                            InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION) != 0
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1 && lacksPermission) {
-                        try {
-                            inputContentInfo.requestPermission()
-                        } catch (e: Exception) {
-                            return@OnCommitContentListener false
-                        }
-                    }
-                    callback?.onRichContentSelected(inputContentInfo.contentUri) ?: false
-                }
-        return InputConnectionCompat.createWrapper(ic, editorInfo, callback)
+        EditorInfoCompat.setContentMimeTypes(editorInfo, mimeTypes)
+        ic = InputConnectionCompat.createWrapper(this, ic, editorInfo)
+
+        ViewCompat.setOnReceiveContentListener(
+                this,
+                mimeTypes,
+                UriContentListener { callback?.onRichContentSelected(it) }
+        )
+
+        return ic
+    }
+
+    /** Set whether the keyboard should disable personalized learning. */
+    @RequiresApi(Build.VERSION_CODES.O)
+    fun setUseIncognitoKeyboard(useIncognitoKeyboard: Boolean) {
+        imeOptions = if (useIncognitoKeyboard) {
+            imeOptions or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+        } else {
+            imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING.inv()
+        }
+    }
+
+    /** Set whether enter should send the message or add a new line. */
+    fun setSendMessageWithEnter(sendMessageWithEnter: Boolean) {
+        if (sendMessageWithEnter) {
+            inputType = inputType and EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE.inv()
+            imeOptions = imeOptions or EditorInfo.IME_ACTION_SEND
+        } else {
+            inputType = inputType or EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE
+            imeOptions = imeOptions and EditorInfo.IME_ACTION_SEND.inv()
+        }
     }
 
     init {
@@ -93,6 +107,7 @@ class ComposerEditText @JvmOverloads constructor(context: Context, attrs: Attrib
                             }
                             spanToRemove = null
                         }
+                        callback?.onTextChanged(s.toString())
                     }
                 }
         )

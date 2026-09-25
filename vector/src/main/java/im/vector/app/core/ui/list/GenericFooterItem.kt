@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.core.ui.list
 
@@ -21,10 +12,13 @@ import androidx.annotation.ColorInt
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
 import im.vector.app.R
+import im.vector.app.core.epoxy.ClickListener
 import im.vector.app.core.epoxy.VectorEpoxyHolder
 import im.vector.app.core.epoxy.VectorEpoxyModel
+import im.vector.app.core.epoxy.onClick
 import im.vector.app.core.extensions.setTextOrHide
 import im.vector.app.features.themes.ThemeUtils
+import im.vector.lib.core.utils.epoxy.charsequence.EpoxyCharSequence
 
 /**
  * A generic list item.
@@ -32,17 +26,17 @@ import im.vector.app.features.themes.ThemeUtils
  * Can display an accessory on the right, that can be an image or an indeterminate progress.
  * If provided with an action, will display a button at the bottom of the list item.
  */
-@EpoxyModelClass(layout = R.layout.item_generic_footer)
-abstract class GenericFooterItem : VectorEpoxyModel<GenericFooterItem.Holder>() {
+@EpoxyModelClass
+abstract class GenericFooterItem : VectorEpoxyModel<GenericFooterItem.Holder>(R.layout.item_generic_footer) {
 
     @EpoxyAttribute
-    var text: String? = null
+    var text: EpoxyCharSequence? = null
 
     @EpoxyAttribute
-    var style: GenericItem.STYLE = GenericItem.STYLE.NORMAL_TEXT
+    var style: ItemStyle = ItemStyle.NORMAL_TEXT
 
-    @EpoxyAttribute
-    var itemClickAction: GenericItem.Action? = null
+    @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
+    var itemClickAction: ClickListener? = null
 
     @EpoxyAttribute
     var centered: Boolean = true
@@ -53,22 +47,19 @@ abstract class GenericFooterItem : VectorEpoxyModel<GenericFooterItem.Holder>() 
 
     override fun bind(holder: Holder) {
         super.bind(holder)
-        holder.text.setTextOrHide(text)
-        when (style) {
-            GenericItem.STYLE.BIG_TEXT    -> holder.text.textSize = 18f
-            GenericItem.STYLE.NORMAL_TEXT -> holder.text.textSize = 14f
-        }
+
+        holder.text.setTextOrHide(text?.charSequence)
+        holder.text.typeface = style.toTypeFace()
+        holder.text.textSize = style.toTextSize()
         holder.text.gravity = if (centered) Gravity.CENTER_HORIZONTAL else Gravity.START
 
         if (textColor != null) {
             holder.text.setTextColor(textColor!!)
         } else {
-            holder.text.setTextColor(ThemeUtils.getColor(holder.view.context, R.attr.riotx_text_secondary))
+            holder.text.setTextColor(ThemeUtils.getColor(holder.view.context, im.vector.lib.ui.styles.R.attr.vctr_content_secondary))
         }
 
-        holder.view.setOnClickListener {
-            itemClickAction?.perform?.run()
-        }
+        holder.view.onClick(itemClickAction)
     }
 
     class Holder : VectorEpoxyHolder() {

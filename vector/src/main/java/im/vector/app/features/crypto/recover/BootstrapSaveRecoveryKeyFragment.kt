@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.crypto.recover
@@ -24,24 +15,23 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import com.airbnb.mvrx.parentFragmentViewModel
 import com.airbnb.mvrx.withState
-import im.vector.app.R
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.extensions.registerStartForActivityResult
+import im.vector.app.core.extensions.safeOpenOutputStream
 import im.vector.app.core.platform.VectorBaseFragment
-import im.vector.app.core.resources.ColorProvider
 import im.vector.app.core.utils.startSharePlainTextIntent
 import im.vector.app.core.utils.toast
 import im.vector.app.databinding.FragmentBootstrapSaveKeyBinding
-
+import im.vector.lib.strings.CommonStrings
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
-class BootstrapSaveRecoveryKeyFragment @Inject constructor(
-        private val colorProvider: ColorProvider
-) : VectorBaseFragment<FragmentBootstrapSaveKeyBinding>() {
+@AndroidEntryPoint
+class BootstrapSaveRecoveryKeyFragment :
+        VectorBaseFragment<FragmentBootstrapSaveKeyBinding>() {
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentBootstrapSaveKeyBinding {
         return FragmentBootstrapSaveKeyBinding.inflate(inflater, container, false)
@@ -70,9 +60,9 @@ class BootstrapSaveRecoveryKeyFragment @Inject constructor(
 
         try {
             sharedViewModel.handle(BootstrapActions.SaveReqQueryStarted)
-            saveStartForActivityResult.launch(Intent.createChooser(intent, getString(R.string.keys_backup_setup_step3_please_make_copy)))
+            saveStartForActivityResult.launch(Intent.createChooser(intent, getString(CommonStrings.keys_backup_setup_step3_please_make_copy)))
         } catch (activityNotFoundException: ActivityNotFoundException) {
-            requireActivity().toast(R.string.error_no_external_application_found)
+            requireActivity().toast(CommonStrings.error_no_external_application_found)
             sharedViewModel.handle(BootstrapActions.SaveReqFailed)
         }
     }
@@ -80,9 +70,9 @@ class BootstrapSaveRecoveryKeyFragment @Inject constructor(
     private val saveStartForActivityResult = registerStartForActivityResult { activityResult ->
         if (activityResult.resultCode == Activity.RESULT_OK) {
             val uri = activityResult.data?.data ?: return@registerStartForActivityResult
-            GlobalScope.launch(Dispatchers.IO) {
+            lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    sharedViewModel.handle(BootstrapActions.SaveKeyToUri(requireContext().contentResolver!!.openOutputStream(uri)!!))
+                    sharedViewModel.handle(BootstrapActions.SaveKeyToUri(requireContext().safeOpenOutputStream(uri)!!))
                 } catch (failure: Throwable) {
                     sharedViewModel.handle(BootstrapActions.SaveReqFailed)
                 }
@@ -104,11 +94,11 @@ class BootstrapSaveRecoveryKeyFragment @Inject constructor(
                 ?: return@withState
 
         startSharePlainTextIntent(
-                this,
+                requireContext(),
                 copyStartForActivityResult,
-                context?.getString(R.string.keys_backup_setup_step3_share_intent_chooser_title),
+                context?.getString(CommonStrings.keys_backup_setup_step3_share_intent_chooser_title),
                 recoveryKey,
-                context?.getString(R.string.recovery_key)
+                context?.getString(CommonStrings.recovery_key)
         )
     }
 
@@ -118,5 +108,6 @@ class BootstrapSaveRecoveryKeyFragment @Inject constructor(
 
         views.recoveryContinue.isVisible = step.isSaved
         views.bootstrapRecoveryKeyText.text = state.recoveryKeyCreationInfo?.recoveryKey?.formatRecoveryKey()
+        views.bootstrapSaveText.giveAccessibilityFocusOnce()
     }
 }

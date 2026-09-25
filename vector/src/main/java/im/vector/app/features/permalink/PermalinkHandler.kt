@@ -1,120 +1,169 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.permalink
 
 import android.content.Context
 import android.net.Uri
-import im.vector.app.R
+import androidx.fragment.app.FragmentActivity
 import im.vector.app.core.di.ActiveSessionHolder
+import im.vector.app.core.extensions.isIgnored
+import im.vector.app.core.resources.UserPreferencesProvider
 import im.vector.app.core.utils.toast
+import im.vector.app.features.home.room.threads.arguments.ThreadTimelineArgs
+import im.vector.app.features.matrixto.OriginOfMatrixTo
 import im.vector.app.features.navigation.Navigator
 import im.vector.app.features.roomdirectory.roompreview.RoomPreviewData
-import io.reactivex.Single
-import io.reactivex.android.schedulers.AndroidSchedulers
-import io.reactivex.schedulers.Schedulers
+import im.vector.lib.strings.CommonStrings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.matrix.android.sdk.api.extensions.orFalse
+import org.matrix.android.sdk.api.extensions.tryOrNull
+import org.matrix.android.sdk.api.session.events.model.getRootThreadEventId
+import org.matrix.android.sdk.api.session.getRoom
+import org.matrix.android.sdk.api.session.getRoomSummary
 import org.matrix.android.sdk.api.session.permalinks.PermalinkData
 import org.matrix.android.sdk.api.session.permalinks.PermalinkParser
+import org.matrix.android.sdk.api.session.room.getTimelineEvent
 import org.matrix.android.sdk.api.session.room.model.Membership
-import org.matrix.android.sdk.api.util.Optional
-import org.matrix.android.sdk.api.util.toOptional
-import org.matrix.android.sdk.rx.rx
+import org.matrix.android.sdk.api.session.room.model.RoomSummary
+import org.matrix.android.sdk.api.session.room.model.RoomType
+import org.matrix.android.sdk.api.session.room.timeline.isRootThread
 import javax.inject.Inject
 
-class PermalinkHandler @Inject constructor(private val activeSessionHolder: ActiveSessionHolder,
-                                           private val navigator: Navigator) {
+class PermalinkHandler @Inject constructor(
+        private val activeSessionHolder: ActiveSessionHolder,
+        private val userPreferencesProvider: UserPreferencesProvider,
+        private val navigator: Navigator
+) {
 
-    fun launch(
-            context: Context,
+    suspend fun launch(
+            fragmentActivity: FragmentActivity,
             deepLink: String?,
             navigationInterceptor: NavigationInterceptor? = null,
             buildTask: Boolean = false
-    ): Single<Boolean> {
+    ): Boolean {
         val uri = deepLink?.let { Uri.parse(it) }
-        return launch(context, uri, navigationInterceptor, buildTask)
+        return launch(fragmentActivity, uri, navigationInterceptor, buildTask)
     }
 
-    fun launch(
-            context: Context,
+    suspend fun launch(
+            fragmentActivity: FragmentActivity,
             deepLink: Uri?,
             navigationInterceptor: NavigationInterceptor? = null,
             buildTask: Boolean = false
-    ): Single<Boolean> {
-        if (deepLink == null) {
-            return Single.just(false)
+    ): Boolean {
+        val supportedHosts = fragmentActivity.resources.getStringArray(im.vector.app.config.R.array.permalink_supported_hosts)
+        return when {
+            deepLink == null -> false
+            deepLink.isIgnored() -> true
+            !activeSessionHolder.getSafeActiveSession()?.permalinkService()?.isPermalinkSupported(supportedHosts, deepLink.toString()).orFalse() -> false
+            else -> {
+                tryOrNull {
+                    withContext(Dispatchers.Default) {
+                        val permalinkData = PermalinkParser.parse(deepLink)
+                        handlePermalink(permalinkData, deepLink, fragmentActivity, navigationInterceptor, buildTask)
+                    }
+                } ?: false
+            }
         }
-        return Single
-                .fromCallable {
-                    PermalinkParser.parse(deepLink)
-                }
-                .subscribeOn(Schedulers.computation())
-                .observeOn(AndroidSchedulers.mainThread())
-                .flatMap { permalinkData ->
-                    handlePermalink(permalinkData, deepLink, context, navigationInterceptor, buildTask)
-                }
-                .onErrorReturnItem(false)
     }
 
-    private fun handlePermalink(
+    private suspend fun handlePermalink(
             permalinkData: PermalinkData,
+            rawLink: Uri,
+            fragmentActivity: FragmentActivity,
+            navigationInterceptor: NavigationInterceptor?,
+            buildTask: Boolean
+    ): Boolean {
+        return when (permalinkData) {
+            is PermalinkData.RoomLink -> handleRoomLink(permalinkData, rawLink, fragmentActivity, navigationInterceptor, buildTask)
+            is PermalinkData.UserLink -> handleUserLink(permalinkData, rawLink, fragmentActivity, navigationInterceptor, buildTask)
+            is PermalinkData.FallbackLink -> handleFallbackLink(permalinkData, fragmentActivity)
+            is PermalinkData.RoomEmailInviteLink -> handleRoomInviteLink(permalinkData, fragmentActivity)
+        }
+    }
+
+    private suspend fun handleRoomLink(
+            permalinkData: PermalinkData.RoomLink,
+            rawLink: Uri,
+            fragmentActivity: FragmentActivity,
+            navigationInterceptor: NavigationInterceptor?,
+            buildTask: Boolean
+    ): Boolean {
+        val roomId = permalinkData.getRoomId()
+        val session = activeSessionHolder.getSafeActiveSession()
+
+        val rootThreadEventId = permalinkData.eventId?.let { eventId ->
+            val room = roomId?.let { session?.getRoom(it) }
+            val event = room?.getTimelineEvent(eventId)
+            event?.root?.getRootThreadEventId() ?: eventId.takeIf { event?.isRootThread() == true }
+        }
+        openRoom(
+                navigationInterceptor,
+                fragmentActivity = fragmentActivity,
+                roomId = roomId,
+                permalinkData = permalinkData,
+                rawLink = rawLink,
+                buildTask = buildTask,
+                rootThreadEventId = rootThreadEventId
+        )
+        return true
+    }
+
+    private fun handleUserLink(
+            permalinkData: PermalinkData.UserLink,
             rawLink: Uri,
             context: Context,
             navigationInterceptor: NavigationInterceptor?,
             buildTask: Boolean
-    ): Single<Boolean> {
-        return when (permalinkData) {
-            is PermalinkData.RoomLink     -> {
-                permalinkData.getRoomId()
-                        .observeOn(AndroidSchedulers.mainThread())
-                        .map {
-                            val roomId = it.getOrNull()
-                            if (navigationInterceptor?.navToRoom(roomId, permalinkData.eventId) != true) {
-                                openRoom(
-                                        context = context,
-                                        roomId = roomId,
-                                        permalinkData = permalinkData,
-                                        buildTask = buildTask
-                                )
-                            }
-                            true
-                        }
+    ): Boolean {
+        if (navigationInterceptor?.navToMemberProfile(permalinkData.userId, rawLink) != true) {
+            navigator.openRoomMemberProfile(userId = permalinkData.userId, roomId = null, context = context, buildTask = buildTask)
+        }
+        return true
+    }
+
+    private fun handleRoomInviteLink(
+            permalinkData: PermalinkData.RoomEmailInviteLink,
+            context: Context
+    ): Boolean {
+        val data = RoomPreviewData(
+                roomId = permalinkData.roomId,
+                roomName = permalinkData.roomName,
+                avatarUrl = permalinkData.roomAvatarUrl,
+                fromEmailInvite = permalinkData,
+                roomType = permalinkData.roomType
+        )
+        navigator.openRoomPreview(context, data)
+        return true
+    }
+
+    private suspend fun handleFallbackLink(
+            permalinkData: PermalinkData.FallbackLink,
+            context: Context
+    ): Boolean {
+        return if (permalinkData.isLegacyGroupLink) {
+            withContext(Dispatchers.Main) {
+                navigator.showGroupsUnsupportedWarning(context)
             }
-            is PermalinkData.GroupLink    -> {
-                navigator.openGroupDetail(permalinkData.groupId, context, buildTask)
-                Single.just(true)
-            }
-            is PermalinkData.UserLink     -> {
-                if (navigationInterceptor?.navToMemberProfile(permalinkData.userId, rawLink) != true) {
-                    navigator.openRoomMemberProfile(userId = permalinkData.userId, roomId = null, context = context, buildTask = buildTask)
-                }
-                Single.just(true)
-            }
-            is PermalinkData.FallbackLink -> {
-                Single.just(false)
-            }
+            true
+        } else {
+            false
         }
     }
 
-    private fun PermalinkData.RoomLink.getRoomId(): Single<Optional<String>> {
+    private suspend fun PermalinkData.RoomLink.getRoomId(): String? {
         val session = activeSessionHolder.getSafeActiveSession()
         return if (isRoomAlias && session != null) {
-            session.rx().getRoomIdByAlias(roomIdOrAlias, true).map { it.getOrNull()?.roomId.toOptional() }.subscribeOn(Schedulers.io())
+            val roomIdByAlias = session.roomService().getRoomIdByAlias(roomIdOrAlias, true)
+            roomIdByAlias.getOrNull()?.roomId
         } else {
-            Single.just(Optional.from(roomIdOrAlias))
+            roomIdOrAlias
         }
     }
 
@@ -127,67 +176,88 @@ class PermalinkHandler @Inject constructor(private val activeSessionHolder: Acti
     }
 
     /**
-     * Open room either joined, or not
+     * Open room either joined, or not.
      */
     private fun openRoom(
-            context: Context,
+            navigationInterceptor: NavigationInterceptor?,
+            fragmentActivity: FragmentActivity,
             roomId: String?,
             permalinkData: PermalinkData.RoomLink,
-            buildTask: Boolean
+            rawLink: Uri,
+            buildTask: Boolean,
+            rootThreadEventId: String? = null
     ) {
         val session = activeSessionHolder.getSafeActiveSession() ?: return
         if (roomId == null) {
-            context.toast(R.string.room_error_not_found)
+            fragmentActivity.toast(CommonStrings.room_error_not_found)
             return
         }
         val roomSummary = session.getRoomSummary(roomId)
         val membership = roomSummary?.membership
         val eventId = permalinkData.eventId
-        val roomAlias = permalinkData.getRoomAliasOrNull()
+//        val roomAlias = permalinkData.getRoomAliasOrNull()
+        val isSpace = roomSummary?.roomType == RoomType.SPACE
         return when {
-            membership == Membership.BAN     -> context.toast(R.string.error_opening_banned_room)
+            membership == Membership.BAN -> fragmentActivity.toast(CommonStrings.error_opening_banned_room)
             membership?.isActive().orFalse() -> {
-                navigator.openRoom(context, roomId, eventId, buildTask)
-            }
-            else                             -> {
-                if (roomSummary == null) {
-                    // we don't know this room, try to peek
-                    val roomPreviewData = RoomPreviewData(
-                            roomId = roomId,
-                            roomAlias = roomAlias,
-                            peekFromServer = true,
-                            buildTask = buildTask,
-                            homeServers = permalinkData.viaParameters
-                    )
-                    navigator.openRoomPreview(context, roomPreviewData)
+                if (!isSpace && membership == Membership.JOIN) {
+                    // If it's a room you're in, let's just open it, you can tap back if needed
+                    navigationInterceptor.openJoinedRoomScreen(buildTask, roomId, eventId, rawLink, fragmentActivity, rootThreadEventId, roomSummary)
                 } else {
-                    val roomPreviewData = RoomPreviewData(
-                            roomId = roomId,
-                            eventId = eventId,
-                            roomAlias = roomAlias ?: roomSummary.canonicalAlias,
-                            roomName = roomSummary.displayName,
-                            avatarUrl = roomSummary.avatarUrl,
-                            buildTask = buildTask,
-                            homeServers = permalinkData.viaParameters
-                    )
-                    navigator.openRoomPreview(context, roomPreviewData)
+                    // maybe open space preview navigator.openSpacePreview(fragmentActivity, roomId)? if already joined?
+                    navigator.openMatrixToBottomSheet(fragmentActivity, rawLink.toString(), OriginOfMatrixTo.LINK)
                 }
             }
+            else -> {
+                // XXX this could trigger another server load
+                navigator.openMatrixToBottomSheet(fragmentActivity, rawLink.toString(), OriginOfMatrixTo.LINK)
+            }
         }
+    }
+
+    private fun NavigationInterceptor?.openJoinedRoomScreen(
+            buildTask: Boolean,
+            roomId: String,
+            eventId: String?,
+            rawLink: Uri,
+            context: Context,
+            rootThreadEventId: String?,
+            roomSummary: RoomSummary
+    ) {
+        if (this?.navToRoom(roomId, eventId, rawLink, rootThreadEventId) != true) {
+            if (rootThreadEventId != null && userPreferencesProvider.areThreadMessagesEnabled()) {
+                val threadTimelineArgs = ThreadTimelineArgs(
+                        roomId = roomId,
+                        displayName = roomSummary.displayName,
+                        avatarUrl = roomSummary.avatarUrl,
+                        roomEncryptionTrustLevel = roomSummary.roomEncryptionTrustLevel,
+                        rootThreadEventId = rootThreadEventId
+                )
+                navigator.openThread(context, threadTimelineArgs, eventId)
+            } else {
+                navigator.openRoom(context, roomId, eventId, buildTask)
+            }
+        }
+    }
+
+    companion object {
+        const val MATRIX_TO_CUSTOM_SCHEME_URL_BASE = "element://"
+        const val ROOM_LINK_PREFIX = "${MATRIX_TO_CUSTOM_SCHEME_URL_BASE}room/"
+        const val USER_LINK_PREFIX = "${MATRIX_TO_CUSTOM_SCHEME_URL_BASE}user/"
     }
 }
 
 interface NavigationInterceptor {
 
     /**
-     * Return true if the navigation has been intercepted
+     * Return true if the navigation has been intercepted.
      */
-    fun navToRoom(roomId: String?, eventId: String? = null): Boolean {
+    fun navToRoom(roomId: String?, eventId: String?, deepLink: Uri? = null, rootThreadEventId: String? = null): Boolean {
         return false
     }
 
     /**
-     * Return true if the navigation has been intercepted
+     * Return true if the navigation has been intercepted.
      */
     fun navToMemberProfile(userId: String, deepLink: Uri): Boolean {
         return false

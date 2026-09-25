@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2021 New Vector Ltd
+ * Copyright 2021-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.devtools
@@ -22,15 +13,20 @@ import android.view.View
 import android.view.ViewGroup
 import com.airbnb.mvrx.activityViewModel
 import com.airbnb.mvrx.withState
+import dagger.hilt.android.AndroidEntryPoint
+import im.vector.app.R
 import im.vector.app.core.extensions.cleanup
 import im.vector.app.core.extensions.configureWith
 import im.vector.app.core.platform.VectorBaseFragment
 import im.vector.app.databinding.FragmentGenericRecyclerBinding
 import javax.inject.Inject
 
-class RoomDevToolStateEventListFragment @Inject constructor(
-        private val epoxyController: RoomStateListController
-) : VectorBaseFragment<FragmentGenericRecyclerBinding>(), DevToolsInteractionListener {
+@AndroidEntryPoint
+class RoomDevToolStateEventListFragment :
+        VectorBaseFragment<FragmentGenericRecyclerBinding>(),
+        DevToolsInteractionListener {
+
+    @Inject lateinit var epoxyController: RoomStateListController
 
     val sharedViewModel: RoomDevToolViewModel by activityViewModel()
 
@@ -40,7 +36,7 @@ class RoomDevToolStateEventListFragment @Inject constructor(
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        views.genericRecyclerView.configureWith(epoxyController, showDivider = true)
+        views.genericRecyclerView.configureWith(epoxyController, dividerDrawable = R.drawable.divider_horizontal)
         epoxyController.interactionListener = this
     }
 

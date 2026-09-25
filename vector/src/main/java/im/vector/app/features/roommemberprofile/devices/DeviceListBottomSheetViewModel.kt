@@ -1,79 +1,99 @@
 /*
- * Copyright 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.roommemberprofile.devices
 
 import com.airbnb.mvrx.Async
-import com.airbnb.mvrx.FragmentViewModelContext
 import com.airbnb.mvrx.Loading
-import com.airbnb.mvrx.MvRxState
-import com.airbnb.mvrx.MvRxViewModelFactory
+import com.airbnb.mvrx.MavericksState
+import com.airbnb.mvrx.MavericksViewModelFactory
 import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
-import im.vector.app.core.di.HasScreenInjector
-import im.vector.app.core.extensions.exhaustive
+import dagger.assisted.AssistedInject
+import dagger.hilt.EntryPoints
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.SingletonEntryPoint
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.VectorViewModel
+import kotlinx.coroutines.launch
+import org.matrix.android.sdk.api.extensions.tryOrNull
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.crypto.crosssigning.MXCrossSigningInfo
-import org.matrix.android.sdk.api.session.crypto.verification.VerificationMethod
+import org.matrix.android.sdk.api.session.crypto.model.CryptoDeviceInfo
+import org.matrix.android.sdk.api.session.getUserOrDefault
 import org.matrix.android.sdk.api.util.MatrixItem
 import org.matrix.android.sdk.api.util.toMatrixItem
-import org.matrix.android.sdk.internal.crypto.model.CryptoDeviceInfo
-import org.matrix.android.sdk.rx.rx
+import org.matrix.android.sdk.flow.flow
 
 data class DeviceListViewState(
+        val userId: String,
+        val myUserId: String,
         val userItem: MatrixItem? = null,
-        val isMine: Boolean = false,
         val memberCrossSigningKey: MXCrossSigningInfo? = null,
+        val myDeviceId: String = "",
         val cryptoDevices: Async<List<CryptoDeviceInfo>> = Loading(),
         val selectedDevice: CryptoDeviceInfo? = null
-) : MvRxState
+) : MavericksState
 
-class DeviceListBottomSheetViewModel @AssistedInject constructor(@Assisted private val initialState: DeviceListViewState,
-                                                                 @Assisted private val args: DeviceListBottomSheet.Args,
-                                                                 private val session: Session)
-    : VectorViewModel<DeviceListViewState, DeviceListAction, DeviceListBottomSheetViewEvents>(initialState) {
+class DeviceListBottomSheetViewModel @AssistedInject constructor(
+        @Assisted private val initialState: DeviceListViewState,
+        private val session: Session
+) :
+        VectorViewModel<DeviceListViewState, DeviceListAction, DeviceListBottomSheetViewEvents>(initialState) {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: DeviceListViewState, args: DeviceListBottomSheet.Args): DeviceListBottomSheetViewModel
+    interface Factory : MavericksAssistedViewModelFactory<DeviceListBottomSheetViewModel, DeviceListViewState> {
+        override fun create(initialState: DeviceListViewState): DeviceListBottomSheetViewModel
+    }
+
+    companion object : MavericksViewModelFactory<DeviceListBottomSheetViewModel, DeviceListViewState> by hiltMavericksViewModelFactory() {
+
+        override fun initialState(viewModelContext: ViewModelContext): DeviceListViewState {
+            val args = viewModelContext.args<DeviceListBottomSheet.Args>()
+            val userId = args.userId
+            val session = EntryPoints.get(viewModelContext.app(), SingletonEntryPoint::class.java).activeSessionHolder().getActiveSession()
+            return DeviceListViewState(
+                    userId = userId,
+                    myUserId = session.myUserId,
+                    userItem = session.getUserOrDefault(userId).toMatrixItem(),
+                    myDeviceId = session.sessionParams.deviceId,
+            )
+        }
     }
 
     init {
-        session.rx().liveUserCryptoDevices(args.userId)
+        session.flow().liveUserCryptoDevices(initialState.userId)
                 .execute {
                     copy(cryptoDevices = it).also {
                         refreshSelectedId()
                     }
                 }
 
-        session.rx().liveCrossSigningInfo(args.userId)
+        session.flow().liveCrossSigningInfo(initialState.userId)
                 .execute {
                     copy(memberCrossSigningKey = it.invoke()?.getOrNull())
                 }
+
+        updateMatrixItem()
+    }
+
+    private fun updateMatrixItem() {
+        viewModelScope.launch {
+            tryOrNull { session.userService().resolveUser(initialState.userId) }
+                    ?.toMatrixItem()
+                    ?.let { setState { copy(userItem = it) } }
+        }
     }
 
     override fun handle(action: DeviceListAction) {
         when (action) {
-            is DeviceListAction.SelectDevice   -> selectDevice(action)
+            is DeviceListAction.SelectDevice -> selectDevice(action)
             is DeviceListAction.DeselectDevice -> deselectDevice()
-            is DeviceListAction.ManuallyVerify -> manuallyVerify(action)
-        }.exhaustive
+        }
     }
 
     private fun refreshSelectedId() = withState { state ->
@@ -89,7 +109,6 @@ class DeviceListBottomSheetViewModel @AssistedInject constructor(@Assisted priva
     }
 
     private fun selectDevice(action: DeviceListAction.SelectDevice) {
-        if (!args.allowDeviceAction) return
         setState {
             copy(selectedDevice = action.device)
         }
@@ -98,33 +117,6 @@ class DeviceListBottomSheetViewModel @AssistedInject constructor(@Assisted priva
     private fun deselectDevice() {
         setState {
             copy(selectedDevice = null)
-        }
-    }
-
-    private fun manuallyVerify(action: DeviceListAction.ManuallyVerify) {
-        if (!args.allowDeviceAction) return
-        session.cryptoService().verificationService().beginKeyVerification(VerificationMethod.SAS, args.userId, action.deviceId, null)?.let { txID ->
-            _viewEvents.post(DeviceListBottomSheetViewEvents.Verify(args.userId, txID))
-        }
-    }
-
-    companion object : MvRxViewModelFactory<DeviceListBottomSheetViewModel, DeviceListViewState> {
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: DeviceListViewState): DeviceListBottomSheetViewModel? {
-            val fragment: DeviceListBottomSheet = (viewModelContext as FragmentViewModelContext).fragment()
-            val args = viewModelContext.args<DeviceListBottomSheet.Args>()
-            return fragment.viewModelFactory.create(state, args)
-        }
-
-        override fun initialState(viewModelContext: ViewModelContext): DeviceListViewState? {
-            val userId = viewModelContext.args<DeviceListBottomSheet.Args>().userId
-            val session = (viewModelContext.activity as HasScreenInjector).injector().activeSessionHolder().getActiveSession()
-            return session.getUser(userId)?.toMatrixItem()?.let {
-                DeviceListViewState(
-                        userItem = it,
-                        isMine = userId == session.myUserId
-                )
-            } ?: return super.initialState(viewModelContext)
         }
     }
 }

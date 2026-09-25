@@ -1,17 +1,8 @@
 /*
- * Copyright 2018 New Vector Ltd
+ * Copyright 2018-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.core.utils
@@ -19,21 +10,22 @@ package im.vector.app.core.utils
 import android.annotation.TargetApi
 import android.app.Activity
 import android.content.ActivityNotFoundException
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
+import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
 import androidx.core.content.getSystemService
 import androidx.fragment.app.Fragment
-import im.vector.app.R
 import im.vector.app.features.notifications.NotificationUtils
+import im.vector.lib.strings.CommonStrings
+import org.matrix.android.sdk.api.util.getApplicationInfoCompat
 
 /**
  * Tells if the application ignores battery optimizations.
@@ -42,21 +34,32 @@ import im.vector.app.features.notifications.NotificationUtils
  * This user option appears on Android M but Android O enforces its usage and kills apps not
  * authorised by the user to run in background.
  *
- * @param context the context
  * @return true if battery optimisations are ignored
  */
-fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+fun Context.isIgnoringBatteryOptimizations(): Boolean {
     // no issue before Android M, battery optimisations did not exist
-    return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
-            || context.getSystemService<PowerManager>()?.isIgnoringBatteryOptimizations(context.packageName) == true
+    return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            getSystemService<PowerManager>()?.isIgnoringBatteryOptimizations(packageName) == true
 }
 
-fun isAirplaneModeOn(context: Context): Boolean {
-    return Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0
+fun Context.isAirplaneModeOn(): Boolean {
+    return Settings.Global.getInt(contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0
 }
 
-fun isAnimationDisabled(context: Context): Boolean {
-    return Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+fun Context.isAnimationEnabled(): Boolean {
+    return Settings.Global.getFloat(contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
+}
+
+/**
+ * Return the application label of the provided package. If not found, the package is returned.
+ */
+fun Context.getApplicationLabel(packageName: String): String {
+    return try {
+        val ai = packageManager.getApplicationInfoCompat(packageName, 0)
+        packageManager.getApplicationLabel(ai).toString()
+    } catch (e: PackageManager.NameNotFoundException) {
+        packageName
+    }
 }
 
 /**
@@ -79,14 +82,15 @@ fun requestDisablingBatteryOptimization(activity: Activity, activityResultLaunch
 // ==============================================================================================================
 
 /**
- * Copy a text to the clipboard, and display a Toast when done
+ * Copy a text to the clipboard, and display a Toast when done.
  *
  * @param context the context
- * @param text    the text to copy
+ * @param text the text to copy
+ * @param showToast true to also show a Toast to the user
+ * @param toastMessage content of the toast message as a String resource
  */
-fun copyToClipboard(context: Context, text: CharSequence, showToast: Boolean = true, @StringRes toastMessage: Int = R.string.copied_to_clipboard) {
-    val clipboard = context.getSystemService<ClipboardManager>()!!
-    clipboard.setPrimaryClip(ClipData.newPlainText("", text))
+fun copyToClipboard(context: Context, text: CharSequence, showToast: Boolean = true, @StringRes toastMessage: Int = CommonStrings.copied_to_clipboard) {
+    CopyToClipboardUseCase(context).execute(text)
     if (showToast) {
         context.toast(toastMessage)
     }
@@ -123,21 +127,34 @@ fun startNotificationChannelSettingsIntent(fragment: Fragment, channelID: String
 }
 
 fun startAddGoogleAccountIntent(context: Context, activityResultLauncher: ActivityResultLauncher<Intent>) {
+    val intent = Intent(Settings.ACTION_ADD_ACCOUNT)
+    intent.putExtra(Settings.EXTRA_ACCOUNT_TYPES, arrayOf("com.google"))
     try {
-        val intent = Intent(Settings.ACTION_ADD_ACCOUNT)
-        intent.putExtra(Settings.EXTRA_ACCOUNT_TYPES, arrayOf("com.google"))
         activityResultLauncher.launch(intent)
     } catch (activityNotFoundException: ActivityNotFoundException) {
-        context.toast(R.string.error_no_external_application_found)
+        context.toast(CommonStrings.error_no_external_application_found)
     }
 }
 
-fun startSharePlainTextIntent(fragment: Fragment,
-                              activityResultLauncher: ActivityResultLauncher<Intent>?,
-                              chooserTitle: String?,
-                              text: String,
-                              subject: String? = null,
-                              extraTitle: String? = null) {
+@RequiresApi(Build.VERSION_CODES.O)
+fun startInstallFromSourceIntent(context: Context, activityResultLauncher: ActivityResultLauncher<Intent>) {
+    val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+            .setData(Uri.parse(String.format("package:%s", context.packageName)))
+    try {
+        activityResultLauncher.launch(intent)
+    } catch (activityNotFoundException: ActivityNotFoundException) {
+        context.toast(CommonStrings.error_no_external_application_found)
+    }
+}
+
+fun startSharePlainTextIntent(
+        context: Context,
+        activityResultLauncher: ActivityResultLauncher<Intent>?,
+        chooserTitle: String?,
+        text: String,
+        subject: String? = null,
+        extraTitle: String? = null
+) {
     val share = Intent(Intent.ACTION_SEND)
     share.type = "text/plain"
     share.addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
@@ -154,10 +171,10 @@ fun startSharePlainTextIntent(fragment: Fragment,
         if (activityResultLauncher != null) {
             activityResultLauncher.launch(intent)
         } else {
-            fragment.startActivity(intent)
+            context.startActivity(intent)
         }
     } catch (activityNotFoundException: ActivityNotFoundException) {
-        fragment.activity?.toast(R.string.error_no_external_application_found)
+        context.toast(CommonStrings.error_no_external_application_found)
     }
 }
 
@@ -165,10 +182,10 @@ fun startImportTextFromFileIntent(context: Context, activityResultLauncher: Acti
     val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
         type = "text/plain"
     }
-    if (intent.resolveActivity(context.packageManager) != null) {
+    try {
         activityResultLauncher.launch(intent)
-    } else {
-        context.toast(R.string.error_no_external_application_found)
+    } catch (activityNotFoundException: ActivityNotFoundException) {
+        context.toast(CommonStrings.error_no_external_application_found)
     }
 }
 

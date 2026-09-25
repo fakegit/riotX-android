@@ -1,33 +1,25 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.terms
 
-import android.view.View
 import android.widget.CheckBox
 import android.widget.CompoundButton
 import android.widget.TextView
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
-import com.airbnb.epoxy.EpoxyModelWithHolder
 import im.vector.app.R
+import im.vector.app.core.epoxy.ClickListener
 import im.vector.app.core.epoxy.VectorEpoxyHolder
+import im.vector.app.core.epoxy.VectorEpoxyModel
+import im.vector.app.core.epoxy.onClick
 
-@EpoxyModelClass(layout = R.layout.item_tos)
-abstract class TermItem : EpoxyModelWithHolder<TermItem.Holder>() {
+@EpoxyModelClass
+abstract class TermItem : VectorEpoxyModel<TermItem.Holder>(R.layout.item_tos) {
 
     @EpoxyAttribute
     var checked: Boolean = false
@@ -42,7 +34,7 @@ abstract class TermItem : EpoxyModelWithHolder<TermItem.Holder>() {
     var checkChangeListener: CompoundButton.OnCheckedChangeListener? = null
 
     @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
-    var clickListener: View.OnClickListener? = null
+    var clickListener: ClickListener? = null
 
     override fun bind(holder: Holder) {
         super.bind(holder)
@@ -50,7 +42,7 @@ abstract class TermItem : EpoxyModelWithHolder<TermItem.Holder>() {
         holder.title.text = name
         holder.description.text = description
         holder.checkbox.setOnCheckedChangeListener(checkChangeListener)
-        holder.view.setOnClickListener(clickListener)
+        holder.view.onClick(clickListener)
     }
 
     class Holder : VectorEpoxyHolder() {

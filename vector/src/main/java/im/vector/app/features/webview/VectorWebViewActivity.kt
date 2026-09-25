@@ -1,33 +1,22 @@
 /*
- * Copyright 2018 New Vector Ltd
+ * Copyright 2018-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.webview
 
 import android.content.Context
 import android.content.Intent
+import android.view.View
 import android.webkit.WebChromeClient
 import android.webkit.WebView
-import androidx.annotation.CallSuper
-import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.platform.VectorBaseActivity
 import im.vector.app.databinding.ActivityVectorWebViewBinding
-
+import im.vector.lib.core.utils.compat.getSerializableCompat
 import org.matrix.android.sdk.api.session.Session
-import javax.inject.Inject
 
 /**
  * This class is responsible for managing a WebView
@@ -35,20 +24,22 @@ import javax.inject.Inject
  * It relies on the VectorWebViewClient
  * This class shouldn't be extended. To add new behaviors, you might create a new WebViewMode and a new WebViewEventListener
  */
+@AndroidEntryPoint
 class VectorWebViewActivity : VectorBaseActivity<ActivityVectorWebViewBinding>() {
 
     override fun getBinding() = ActivityVectorWebViewBinding.inflate(layoutInflater)
 
-    @Inject lateinit var session: Session
+    override val rootView: View
+        get() = views.mainRoot
 
-    @CallSuper
-    override fun injectWith(injector: ScreenComponent) {
-        session = injector.activeSessionHolder().getActiveSession()
+    val session: Session by lazy {
+        activeSessionHolder.getActiveSession()
     }
 
     override fun initUiAndData() {
-        configureToolbar(views.webviewToolbar)
-        waitingView = findViewById(R.id.simple_webview_loader)
+        setupToolbar(views.webviewToolbar)
+                .allowBack()
+        waitingView = views.simpleWebviewLoader
 
         views.simpleWebview.settings.apply {
             // Enable Javascript
@@ -81,7 +72,7 @@ class VectorWebViewActivity : VectorBaseActivity<ActivityVectorWebViewBinding>()
             setTitle(title)
         }
 
-        val webViewMode = intent.extras?.getSerializable(EXTRA_MODE) as WebViewMode
+        val webViewMode = intent.extras?.getSerializableCompat<WebViewMode>(EXTRA_MODE)!!
         val eventListener = webViewMode.eventListener(this, session)
         views.simpleWebview.webViewClient = VectorWebViewClient(eventListener)
         views.simpleWebview.webChromeClient = object : WebChromeClient() {
@@ -98,6 +89,7 @@ class VectorWebViewActivity : VectorBaseActivity<ActivityVectorWebViewBinding>()
      * UI event
      * ========================================================================================== */
 
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
         if (views.simpleWebview.canGoBack()) {
             views.simpleWebview.goBack()
@@ -117,10 +109,12 @@ class VectorWebViewActivity : VectorBaseActivity<ActivityVectorWebViewBinding>()
 
         private const val USE_TITLE_FROM_WEB_PAGE = ""
 
-        fun getIntent(context: Context,
-                      url: String,
-                      title: String = USE_TITLE_FROM_WEB_PAGE,
-                      mode: WebViewMode = WebViewMode.DEFAULT): Intent {
+        fun getIntent(
+                context: Context,
+                url: String,
+                title: String = USE_TITLE_FROM_WEB_PAGE,
+                mode: WebViewMode = WebViewMode.DEFAULT
+        ): Intent {
             return Intent(context, VectorWebViewActivity::class.java)
                     .apply {
                         putExtra(EXTRA_URL, url)

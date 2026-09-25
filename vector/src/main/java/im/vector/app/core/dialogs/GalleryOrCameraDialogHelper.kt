@@ -1,37 +1,31 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.core.dialogs
 
 import android.app.Activity
 import android.net.Uri
-import androidx.appcompat.app.AlertDialog
 import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.yalantis.ucrop.UCrop
-import im.vector.app.R
+import im.vector.app.core.dialogs.GalleryOrCameraDialogHelper.Listener
 import im.vector.app.core.extensions.insertBeforeLast
 import im.vector.app.core.extensions.registerStartForActivityResult
 import im.vector.app.core.resources.ColorProvider
 import im.vector.app.core.utils.PERMISSIONS_FOR_TAKING_PHOTO
 import im.vector.app.core.utils.checkPermissions
+import im.vector.app.core.utils.onPermissionDeniedDialog
 import im.vector.app.core.utils.registerForPermissionsResult
 import im.vector.app.features.media.createUCropWithDefaultSettings
+import im.vector.lib.core.utils.timer.Clock
 import im.vector.lib.multipicker.MultiPicker
 import im.vector.lib.multipicker.entity.MultiPickerImageType
+import im.vector.lib.strings.CommonStrings
 import java.io.File
 
 /**
@@ -43,7 +37,8 @@ import java.io.File
 class GalleryOrCameraDialogHelper(
         // must implement GalleryOrCameraDialogHelper.Listener
         private val fragment: Fragment,
-        private val colorProvider: ColorProvider
+        private val colorProvider: ColorProvider,
+        private val clock: Clock,
 ) {
     interface Listener {
         fun onImageReady(uri: Uri?)
@@ -54,9 +49,11 @@ class GalleryOrCameraDialogHelper(
 
     private val listener = fragment as? Listener ?: error("Fragment must implement GalleryOrCameraDialogHelper.Listener")
 
-    private val takePhotoPermissionActivityResultLauncher = fragment.registerForPermissionsResult { allGranted ->
+    private val takePhotoPermissionActivityResultLauncher = fragment.registerForPermissionsResult { allGranted, deniedPermanently ->
         if (allGranted) {
             doOpenCamera()
+        } else if (deniedPermanently) {
+            activity.onPermissionDeniedDialog(CommonStrings.denied_permission_camera)
         }
     }
 
@@ -87,9 +84,9 @@ class GalleryOrCameraDialogHelper(
     }
 
     private fun startUCrop(image: MultiPickerImageType) {
-        val destinationFile = File(activity.cacheDir, image.displayName.insertBeforeLast("_e_${System.currentTimeMillis()}"))
+        val destinationFile = File(activity.cacheDir, image.displayName.insertBeforeLast("_e_${clock.epochMillis()}"))
         val uri = image.contentUri
-        createUCropWithDefaultSettings(colorProvider, uri, destinationFile.toUri(), fragment.getString(R.string.rotate_and_crop_screen_title))
+        createUCropWithDefaultSettings(colorProvider, uri, destinationFile.toUri(), fragment.getString(CommonStrings.rotate_and_crop_screen_title))
                 .withAspectRatio(1f, 1f)
                 .getIntent(activity)
                 .let { uCropActivityResultLauncher.launch(it) }
@@ -101,15 +98,17 @@ class GalleryOrCameraDialogHelper(
     }
 
     fun show() {
-        AlertDialog.Builder(activity)
-                .setTitle(R.string.attachment_type_dialog_title)
-                .setItems(arrayOf(
-                        fragment.getString(R.string.attachment_type_camera),
-                        fragment.getString(R.string.attachment_type_gallery)
-                )) { _, which ->
+        MaterialAlertDialogBuilder(activity)
+                .setTitle(CommonStrings.attachment_type_dialog_title)
+                .setItems(
+                        arrayOf(
+                                fragment.getString(CommonStrings.attachment_type_camera),
+                                fragment.getString(CommonStrings.attachment_type_gallery)
+                        )
+                ) { _, which ->
                     onAvatarTypeSelected(if (which == 0) Type.Camera else Type.Gallery)
                 }
-                .setPositiveButton(R.string.cancel, null)
+                .setPositiveButton(CommonStrings.action_cancel, null)
                 .show()
     }
 

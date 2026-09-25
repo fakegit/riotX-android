@@ -1,22 +1,14 @@
 /*
- * Copyright 2018 New Vector Ltd
+ * Copyright 2018-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.core.utils
 
 import android.content.Context
+import androidx.annotation.WorkerThread
 import timber.log.Timber
 import java.io.File
 import java.util.Locale
@@ -68,7 +60,7 @@ private fun logAction(file: File): Boolean {
  * ========================================================================================== */
 
 /**
- * Return true in case of success
+ * Return true in case of success.
  */
 private fun recursiveActionOnFile(file: File, action: ActionOnFile): Boolean {
     if (file.isDirectory) {
@@ -86,7 +78,7 @@ private fun recursiveActionOnFile(file: File, action: ActionOnFile): Boolean {
 }
 
 /**
- * Get the file extension of a fileUri or a filename
+ * Get the file extension of a fileUri or a filename.
  *
  * @param fileUri the fileUri (can be a simple filename)
  * @return the file extension, in lower case, or null is extension is not available or empty
@@ -112,7 +104,7 @@ fun getFileExtension(fileUri: String): String? {
                 val ext = filename.substring(dotPos + 1)
 
                 if (ext.isNotBlank()) {
-                    return ext.toLowerCase(Locale.ROOT)
+                    return ext.lowercase(Locale.ROOT)
                 }
             }
         }
@@ -125,11 +117,12 @@ fun getFileExtension(fileUri: String): String? {
  * Size
  * ========================================================================================== */
 
-fun getSizeOfFiles(root: File): Int {
+@WorkerThread
+fun getSizeOfFiles(root: File): Long {
     return root.walkTopDown()
             .onEnter {
                 Timber.v("Get size of ${it.absolutePath}")
                 true
             }
-            .sumBy { it.length().toInt() }
+            .sumOf { it.length() }
 }

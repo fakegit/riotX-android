@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.discovery
 
@@ -20,38 +11,43 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import com.airbnb.mvrx.args
 import com.airbnb.mvrx.fragmentViewModel
 import com.airbnb.mvrx.withState
-import im.vector.app.R
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.extensions.cleanup
 import im.vector.app.core.extensions.configureWith
-import im.vector.app.core.extensions.exhaustive
 import im.vector.app.core.extensions.observeEvent
 import im.vector.app.core.extensions.registerStartForActivityResult
 import im.vector.app.core.platform.VectorBaseFragment
 import im.vector.app.core.utils.ensureProtocol
+import im.vector.app.core.utils.openUrlInChromeCustomTab
+import im.vector.app.core.utils.showIdentityServerConsentDialog
 import im.vector.app.databinding.FragmentGenericRecyclerBinding
 import im.vector.app.features.discovery.change.SetIdentityServerFragment
+import im.vector.app.features.navigation.SettingsActivityPayload
 import im.vector.app.features.settings.VectorSettingsActivity
-
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.session.identity.SharedState
 import org.matrix.android.sdk.api.session.identity.ThreePid
 import org.matrix.android.sdk.api.session.terms.TermsService
 import javax.inject.Inject
 
-class DiscoverySettingsFragment @Inject constructor(
-        private val controller: DiscoverySettingsController,
-        val viewModelFactory: DiscoverySettingsViewModel.Factory
-) : VectorBaseFragment<FragmentGenericRecyclerBinding>(),
+@AndroidEntryPoint
+class DiscoverySettingsFragment :
+        VectorBaseFragment<FragmentGenericRecyclerBinding>(),
         DiscoverySettingsController.Listener {
+
+    @Inject lateinit var controller: DiscoverySettingsController
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentGenericRecyclerBinding {
         return FragmentGenericRecyclerBinding.inflate(inflater, container, false)
     }
 
     private val viewModel by fragmentViewModel(DiscoverySettingsViewModel::class)
+    private val discoveryArgs: SettingsActivityPayload.DiscoverySettings by args()
 
     lateinit var sharedViewModel: DiscoverySharedViewModel
 
@@ -67,7 +63,7 @@ class DiscoverySettingsFragment @Inject constructor(
             when (it) {
                 is DiscoverySharedViewModelAction.ChangeIdentityServer ->
                     viewModel.handle(DiscoverySettingsAction.ChangeIdentityServer(it.newUrl))
-            }.exhaustive
+            }
         }
 
         viewModel.observeViewEvents {
@@ -75,7 +71,10 @@ class DiscoverySettingsFragment @Inject constructor(
                 is DiscoverySettingsViewEvents.Failure -> {
                     displayErrorDialog(it.throwable)
                 }
-            }.exhaustive
+            }
+        }
+        if (discoveryArgs.expandIdentityPolicies) {
+            viewModel.handle(DiscoverySettingsAction.SetPoliciesExpandState(expanded = true))
         }
     }
 
@@ -91,7 +90,7 @@ class DiscoverySettingsFragment @Inject constructor(
 
     override fun onResume() {
         super.onResume()
-        (activity as? AppCompatActivity)?.supportActionBar?.setTitle(R.string.settings_discovery_category)
+        (activity as? AppCompatActivity)?.supportActionBar?.setTitle(CommonStrings.settings_discovery_category)
 
         // If some 3pids are pending, we can try to check if they have been verified here
         viewModel.handle(DiscoverySettingsAction.Refresh)
@@ -111,8 +110,9 @@ class DiscoverySettingsFragment @Inject constructor(
                     requireContext(),
                     termsActivityResultLauncher,
                     TermsService.ServiceType.IdentityService,
-                    state.identityServer()?.ensureProtocol() ?: "",
-                    null)
+                    state.identityServer()?.serverUrl?.ensureProtocol() ?: "",
+                    null
+            )
         }
     }
 
@@ -143,11 +143,11 @@ class DiscoverySettingsFragment @Inject constructor(
 
         if (hasBoundIds) {
             // we should prompt
-            AlertDialog.Builder(requireActivity())
-                    .setTitle(R.string.change_identity_server)
-                    .setMessage(getString(R.string.settings_discovery_disconnect_with_bound_pid, state.identityServer(), state.identityServer()))
-                    .setPositiveButton(R.string._continue) { _, _ -> navigateToChangeIdentityServerFragment() }
-                    .setNegativeButton(R.string.cancel, null)
+            MaterialAlertDialogBuilder(requireActivity())
+                    .setTitle(CommonStrings.change_identity_server)
+                    .setMessage(getString(CommonStrings.settings_discovery_disconnect_with_bound_pid, state.identityServer(), state.identityServer()))
+                    .setPositiveButton(CommonStrings._continue) { _, _ -> navigateToChangeIdentityServerFragment() }
+                    .setNegativeButton(CommonStrings.action_cancel, null)
                     .show()
             Unit
         } else {
@@ -161,17 +161,18 @@ class DiscoverySettingsFragment @Inject constructor(
             val pidList = state.emailList().orEmpty() + state.phoneNumbersList().orEmpty()
             val hasBoundIds = pidList.any { it.isShared() == SharedState.SHARED }
 
+            val serverUrl = state.identityServer()?.serverUrl.orEmpty()
             val message = if (hasBoundIds) {
-                getString(R.string.settings_discovery_disconnect_with_bound_pid, state.identityServer(), state.identityServer())
+                getString(CommonStrings.settings_discovery_disconnect_with_bound_pid, serverUrl, serverUrl)
             } else {
-                getString(R.string.disconnect_identity_server_dialog_content, state.identityServer())
+                getString(CommonStrings.disconnect_identity_server_dialog_content, serverUrl)
             }
 
-            AlertDialog.Builder(requireActivity())
-                    .setTitle(R.string.disconnect_identity_server)
+            MaterialAlertDialogBuilder(requireActivity())
+                    .setTitle(CommonStrings.disconnect_identity_server)
                     .setMessage(message)
-                    .setPositiveButton(R.string.disconnect) { _, _ -> viewModel.handle(DiscoverySettingsAction.DisconnectIdentityServer) }
-                    .setNegativeButton(R.string.cancel, null)
+                    .setPositiveButton(CommonStrings.action_disconnect) { _, _ -> viewModel.handle(DiscoverySettingsAction.DisconnectIdentityServer) }
+                    .setNegativeButton(CommonStrings.action_cancel, null)
                     .show()
         }
     }
@@ -179,14 +180,10 @@ class DiscoverySettingsFragment @Inject constructor(
     override fun onTapUpdateUserConsent(newValue: Boolean) {
         if (newValue) {
             withState(viewModel) { state ->
-                AlertDialog.Builder(requireActivity())
-                        .setTitle(R.string.identity_server_consent_dialog_title)
-                        .setMessage(getString(R.string.identity_server_consent_dialog_content, state.identityServer.invoke()))
-                        .setPositiveButton(R.string.yes) { _, _ ->
-                            viewModel.handle(DiscoverySettingsAction.UpdateUserConsent(true))
-                        }
-                        .setNegativeButton(R.string.no, null)
-                        .show()
+                requireContext().showIdentityServerConsentDialog(
+                        state.identityServer.invoke(),
+                        consentCallBack = { viewModel.handle(DiscoverySettingsAction.UpdateUserConsent(true)) }
+                )
             }
         } else {
             viewModel.handle(DiscoverySettingsAction.UpdateUserConsent(false))
@@ -195,6 +192,14 @@ class DiscoverySettingsFragment @Inject constructor(
 
     override fun onTapRetryToRetrieveBindings() {
         viewModel.handle(DiscoverySettingsAction.RetrieveBinding)
+    }
+
+    override fun onPolicyUrlsExpandedStateToggled(newExpandedState: Boolean) {
+        viewModel.handle(DiscoverySettingsAction.SetPoliciesExpandState(expanded = newExpandedState))
+    }
+
+    override fun onPolicyTapped(policy: ServerPolicy) {
+        openUrlInChromeCustomTab(requireContext(), null, policy.url)
     }
 
     private fun navigateToChangeIdentityServerFragment() {

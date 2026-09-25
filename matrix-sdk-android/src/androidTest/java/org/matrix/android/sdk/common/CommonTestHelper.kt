@@ -18,67 +18,143 @@ package org.matrix.android.sdk.common
 
 import android.content.Context
 import android.net.Uri
-import androidx.lifecycle.Observer
+import android.util.Log
+import androidx.test.internal.runner.junit4.statement.UiThreadStatement
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.matrix.android.sdk.api.Matrix
 import org.matrix.android.sdk.api.MatrixCallback
 import org.matrix.android.sdk.api.MatrixConfiguration
+import org.matrix.android.sdk.api.SyncConfig
 import org.matrix.android.sdk.api.auth.data.HomeServerConnectionConfig
 import org.matrix.android.sdk.api.auth.registration.RegistrationResult
+import org.matrix.android.sdk.api.crypto.MXCryptoConfig
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.events.model.EventType
 import org.matrix.android.sdk.api.session.events.model.toModel
+import org.matrix.android.sdk.api.session.getRoomSummary
 import org.matrix.android.sdk.api.session.room.Room
+import org.matrix.android.sdk.api.session.room.failure.JoinRoomFailure
+import org.matrix.android.sdk.api.session.room.getTimelineEvent
+import org.matrix.android.sdk.api.session.room.model.Membership
 import org.matrix.android.sdk.api.session.room.model.message.MessageContent
 import org.matrix.android.sdk.api.session.room.send.SendState
 import org.matrix.android.sdk.api.session.room.timeline.Timeline
 import org.matrix.android.sdk.api.session.room.timeline.TimelineEvent
 import org.matrix.android.sdk.api.session.room.timeline.TimelineSettings
-import org.matrix.android.sdk.api.session.sync.SyncState
-import java.util.ArrayList
+import timber.log.Timber
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * This class exposes methods to be used in common cases
  * Registration, login, Sync, Sending messages...
  */
-class CommonTestHelper(context: Context) {
+class CommonTestHelper internal constructor(context: Context, val cryptoConfig: MXCryptoConfig? = null) {
 
-    val matrix: Matrix
+    companion object {
 
-    fun getTestInterceptor(session: Session): MockOkHttpInterceptor? = TestNetworkModule.interceptorForSession(session.sessionId) as? MockOkHttpInterceptor
+        internal fun runSessionTest(context: Context, cryptoConfig: MXCryptoConfig? = null, autoSignoutOnClose: Boolean = true, block: suspend CoroutineScope.(CommonTestHelper) -> Unit) {
+            val testHelper = CommonTestHelper(context, cryptoConfig)
+            return runTest(timeout = TestConstants.timeOutMillis.milliseconds) {
+                try {
+                    withContext(Dispatchers.Default) {
+                        block(testHelper)
+                    }
+                } finally {
+                    if (autoSignoutOnClose) {
+                        testHelper.cleanUpOpenedSessions()
+                    }
+                }
+            }
+        }
 
-    init {
-        Matrix.initialize(
-                context,
-                MatrixConfiguration(
-                        applicationFlavor = "TestFlavor",
-                        roomDisplayNameFallbackProvider = TestRoomDisplayNameFallbackProvider()
-                )
-        )
-        matrix = Matrix.getInstance(context)
+        internal fun runCryptoTest(context: Context, cryptoConfig: MXCryptoConfig? = null, autoSignoutOnClose: Boolean = true, block: suspend CoroutineScope.(CryptoTestHelper, CommonTestHelper) -> Unit) {
+            val testHelper = CommonTestHelper(context, cryptoConfig)
+            val cryptoTestHelper = CryptoTestHelper(testHelper)
+            return runTest(timeout = TestConstants.timeOutMillis.milliseconds) {
+                try {
+                    withContext(Dispatchers.Default) {
+                        block(cryptoTestHelper, testHelper)
+                    }
+                } finally {
+                    if (autoSignoutOnClose) {
+                        testHelper.cleanUpOpenedSessions()
+                    }
+                }
+            }
+        }
+
+        internal fun runLongCryptoTest(context: Context, cryptoConfig: MXCryptoConfig? = null, autoSignoutOnClose: Boolean = true, block: suspend CoroutineScope.(CryptoTestHelper, CommonTestHelper) -> Unit) {
+            val testHelper = CommonTestHelper(context, cryptoConfig)
+            val cryptoTestHelper = CryptoTestHelper(testHelper)
+            return runTest(timeout = (TestConstants.timeOutMillis * 4).milliseconds) {
+                try {
+                    withContext(Dispatchers.Default) {
+                        block(cryptoTestHelper, testHelper)
+                    }
+                } finally {
+                    if (autoSignoutOnClose) {
+                        testHelper.cleanUpOpenedSessions()
+                    }
+                }
+            }
+        }
     }
 
-    fun createAccount(userNamePrefix: String, testParams: SessionTestParams): Session {
+    internal val matrix: TestMatrix
+    private var accountNumber = 0
+
+    private val trackedSessions = mutableListOf<Session>()
+
+    fun getTestInterceptor(session: Session): MockOkHttpInterceptor? = TestModule.interceptorForSession(session.sessionId) as? MockOkHttpInterceptor
+
+    init {
+        var _matrix: TestMatrix? = null
+        UiThreadStatement.runOnUiThread {
+            _matrix = TestMatrix(
+                    context,
+                    MatrixConfiguration(
+                            applicationFlavor = "TestFlavor",
+                            roomDisplayNameFallbackProvider = TestRoomDisplayNameFallbackProvider(),
+                            syncConfig = SyncConfig(longPollTimeout = 5_000L),
+                            cryptoConfig = cryptoConfig ?: MXCryptoConfig()
+                    )
+            )
+        }
+        matrix = _matrix!!
+    }
+
+    suspend fun createAccount(userNamePrefix: String, testParams: SessionTestParams): Session {
         return createAccount(userNamePrefix, TestConstants.PASSWORD, testParams)
     }
 
-    fun logIntoAccount(userId: String, testParams: SessionTestParams): Session {
+    suspend fun logIntoAccount(userId: String, testParams: SessionTestParams): Session {
         return logIntoAccount(userId, TestConstants.PASSWORD, testParams)
     }
 
+    suspend fun cleanUpOpenedSessions() {
+        trackedSessions.forEach {
+            it.signOutService().signOut(true)
+        }
+        trackedSessions.clear()
+    }
+
     /**
-     * Create a Home server configuration, with Http connection allowed for test
+     * Create a homeserver configuration, with Http connection allowed for test
      */
     fun createHomeServerConfig(): HomeServerConnectionConfig {
         return HomeServerConnectionConfig.Builder()
@@ -86,147 +162,302 @@ class CommonTestHelper(context: Context) {
                 .build()
     }
 
+    suspend fun syncSession(session: Session, timeout: Long = TestConstants.timeOutMillis * 10) {
+        session.syncService().startSync(true)
+        val syncLiveData = session.syncService().getSyncStateLive()
+        syncLiveData.first(timeout) { session.syncService().hasAlreadySynced() }
+    }
+
     /**
-     * This methods init the event stream and check for initial sync
+     * This methods clear the cache and waits for initialSync
      *
-     * @param session    the session to sync
+     * @param session the session to sync
      */
-    fun syncSession(session: Session, timeout: Long = TestConstants.timeOutMillis) {
-        val lock = CountDownLatch(1)
-
-        val job = GlobalScope.launch(Dispatchers.Main) {
-            session.open()
-        }
-        runBlocking { job.join() }
-
-        session.startSync(true)
-
-        val syncLiveData = runBlocking(Dispatchers.Main) {
-            session.getSyncStateLive()
-        }
-        val syncObserver = object : Observer<SyncState> {
-            override fun onChanged(t: SyncState?) {
-                if (session.hasAlreadySynced()) {
-                    lock.countDown()
-                    syncLiveData.removeObserver(this)
-                }
-            }
-        }
-        GlobalScope.launch(Dispatchers.Main) { syncLiveData.observeForever(syncObserver) }
-
-        await(lock, timeout)
+    suspend fun clearCacheAndSync(session: Session, timeout: Long = TestConstants.timeOutMillis) {
+        session.clearCache()
+        syncSession(session, timeout)
+        session.syncService().getSyncStateLive().first(timeout) { session.syncService().hasAlreadySynced() }
+        Timber.v("Clear cache and synced")
     }
 
     /**
      * Sends text messages in a room
      *
-     * @param room         the room where to send the messages
-     * @param message      the message to send
+     * @param room the room where to send the messages
+     * @param message the message to send
      * @param nbOfMessages the number of time the message will be sent
      */
-    fun sendTextMessage(room: Room, message: String, nbOfMessages: Int, timeout: Long = TestConstants.timeOutMillis): List<TimelineEvent> {
-        val timeline = room.createTimeline(null, TimelineSettings(10))
-        val sentEvents = ArrayList<TimelineEvent>(nbOfMessages)
-        val latch = CountDownLatch(1)
-        val timelineListener = object : Timeline.Listener {
-            override fun onTimelineFailure(throwable: Throwable) {
-            }
+    suspend fun sendTextMessage(room: Room, message: String, nbOfMessages: Int, timeout: Long = TestConstants.timeOutMillis): List<TimelineEvent> {
+        val timeline = room.timelineService().createTimeline(null, TimelineSettings(10))
+        timeline.start()
+        val sentEvents = sendTextMessagesBatched(timeline, room, message, nbOfMessages, timeout)
+        timeline.dispose()
+        // Check that all events has been created
+        assertEquals("Message number do not match $sentEvents", nbOfMessages.toLong(), sentEvents.size.toLong())
+        return sentEvents
+    }
 
+    suspend fun sendMessageInRoom(room: Room, text: String): String {
+        Log.v("#E2E TEST", "sendMessageInRoom room:${room.roomId} <$text>")
+        room.sendService().sendTextMessage(text)
+
+        val timeline = room.timelineService().createTimeline(null, TimelineSettings(60))
+        timeline.start()
+
+        val messageSent = CompletableDeferred<String>()
+        timeline.addListener(object : Timeline.Listener {
+            override fun onTimelineUpdated(snapshot: List<TimelineEvent>) {
+                val decryptedMsg = timeline.getSnapshot()
+                        .filter { it.root.getClearType() == EventType.MESSAGE }
+                        .also { list ->
+                            val message = list.joinToString(",", "[", "]") { "${it.root.type}|${it.root.sendState}" }
+                            Log.v("#E2E TEST", "Timeline snapshot is $message")
+                        }
+                        .filter { it.root.sendState == SendState.SYNCED }
+                        .firstOrNull { it.root.getClearContent().toModel<MessageContent>()?.body?.startsWith(text) == true }
+                if (decryptedMsg != null) {
+                    timeline.dispose()
+                    messageSent.complete(decryptedMsg.eventId)
+                }
+            }
+        })
+        return messageSent.await().also {
+            Log.v("#E2E TEST", "Message <${text}> sent and synced with id $it")
+        }
+        // return withTimeout(TestConstants.timeOutMillis) { messageSent.await() }
+    }
+
+    suspend fun ensureMessage(room: Room, eventId: String, block: ((event: TimelineEvent) -> Boolean)) {
+        Log.v("#E2E TEST", "ensureMessage room:${room.roomId} <$eventId>")
+        val timeline = room.timelineService().createTimeline(null, TimelineSettings(60, buildReadReceipts = false))
+
+        // check if not already there?
+        val existing = withContext(Dispatchers.Main) {
+            room.getTimelineEvent(eventId)
+        }
+        if (existing != null && block(existing)) return Unit.also {
+            Log.v("#E2E TEST", "Already received")
+        }
+
+        val messageSent = CompletableDeferred<Unit>()
+
+        timeline.addListener(object : Timeline.Listener {
             override fun onNewTimelineEvents(eventIds: List<String>) {
-                // noop
+                Log.v("#E2E TEST", "onNewTimelineEvents snapshot is $eventIds")
             }
 
             override fun onTimelineUpdated(snapshot: List<TimelineEvent>) {
-                val newMessages = snapshot
-                        .filter { it.root.sendState == SendState.SYNCED }
-                        .filter { it.root.getClearType() == EventType.MESSAGE }
-                        .filter { it.root.getClearContent().toModel<MessageContent>()?.body?.startsWith(message) == true }
+                val success = timeline.getSnapshot()
+                        // .filter { it.root.getClearType() == EventType.MESSAGE }
+                        .also { list ->
+                            val message = list.joinToString(",", "[", "]") {
+                                "${it.eventId}|${it.root.getClearType()}|${it.root.sendState}|${it.root.mxDecryptionResult?.verificationState}"
+                            }
+                            Log.v("#E2E TEST", "Timeline snapshot is $message")
+                        }
+                        .firstOrNull { it.eventId == eventId }
+                        ?.let {
+                            block(it)
+                        } ?: false
+                if (success) {
+                    messageSent.complete(Unit)
+                    timeline.dispose()
+                }
+            }
+        })
 
-                if (newMessages.size == nbOfMessages) {
-                    sentEvents.addAll(newMessages)
-                    // Remove listener now, if not at the next update sendEvents could change
-                    timeline.removeListener(this)
-                    latch.countDown()
+        timeline.start()
+
+        return messageSent.await()
+        // withTimeout(TestConstants.timeOutMillis) {
+        //    messageSent.await()
+        // }
+    }
+
+    fun ensureMessagePromise(room: Room, eventId: String, block: ((event: TimelineEvent) -> Boolean)): CompletableDeferred<Unit> {
+        val timeline = room.timelineService().createTimeline(null, TimelineSettings(60))
+        timeline.start()
+        val messageSent = CompletableDeferred<Unit>()
+        timeline.addListener(object : Timeline.Listener {
+            override fun onTimelineUpdated(snapshot: List<TimelineEvent>) {
+                val success = timeline.getSnapshot()
+                        .filter { it.root.getClearType() == EventType.MESSAGE }
+                        .also { list ->
+                            val message = list.joinToString(",", "[", "]") {
+                                "${it.root.type}|${it.root.getClearType()}|${it.root.sendState}|${it.root.mxDecryptionResult?.verificationState}"
+                            }
+                            Log.v("#E2E TEST", "Promise Timeline snapshot is $message")
+                        }
+                        .firstOrNull { it.eventId == eventId }
+                        ?.let {
+                            block(it)
+                        } ?: false
+                if (success) {
+                    messageSent.complete(Unit)
+                    timeline.dispose()
+                }
+            }
+        })
+        return messageSent
+    }
+
+    /**
+     * Will send nb of messages provided by count parameter but waits every 10 messages to avoid gap in sync
+     */
+    private suspend fun sendTextMessagesBatched(timeline: Timeline, room: Room, message: String, count: Int, timeout: Long, rootThreadEventId: String? = null): List<TimelineEvent> {
+        val sentEvents = ArrayList<TimelineEvent>(count)
+        (1 until count + 1)
+                .map { "$message #$it" }
+                .chunked(10)
+                .forEach { batchedMessages ->
+                    waitFor(
+                            continueWhen = {
+                                wrapWithTimeout(timeout) {
+                                    suspendCoroutine<Unit> { continuation ->
+                                        val timelineListener = object : Timeline.Listener {
+
+                                            override fun onTimelineUpdated(snapshot: List<TimelineEvent>) {
+                                                val allSentMessages = snapshot
+                                                        .filter { it.root.sendState == SendState.SYNCED }
+                                                        .filter { it.root.getClearType() == EventType.MESSAGE }
+                                                        .filter { it.root.getClearContent().toModel<MessageContent>()?.body?.startsWith(message) == true }
+
+                                                val hasSyncedAllBatchedMessages = allSentMessages
+                                                        .map {
+                                                            it.root.getClearContent().toModel<MessageContent>()?.body
+                                                        }
+                                                        .containsAll(batchedMessages)
+
+                                                if (allSentMessages.size == count) {
+                                                    sentEvents.addAll(allSentMessages)
+                                                }
+                                                if (hasSyncedAllBatchedMessages) {
+                                                    timeline.removeListener(this)
+                                                    continuation.resume(Unit)
+                                                }
+                                            }
+                                        }
+                                        timeline.addListener(timelineListener)
+                                    }
+                                }
+                            },
+                            action = {
+                                batchedMessages.forEach { formattedMessage ->
+                                    if (rootThreadEventId != null) {
+                                        room.relationService().replyInThread(
+                                                rootThreadEventId = rootThreadEventId,
+                                                replyInThreadText = formattedMessage
+                                        )
+                                    } else {
+                                        room.sendService().sendTextMessage(formattedMessage)
+                                    }
+                                }
+                            }
+                    )
+                }
+        return sentEvents
+    }
+
+    suspend fun waitForAndAcceptInviteInRoom(otherSession: Session, roomID: String) {
+        retryWithBackoff {
+            val roomSummary = otherSession.getRoomSummary(roomID)
+            (roomSummary != null && roomSummary.membership == Membership.INVITE).also {
+                if (it) {
+                    Log.v("#E2E TEST", "${otherSession.myUserId} can see the invite")
                 }
             }
         }
-        timeline.start()
-        timeline.addListener(timelineListener)
-        for (i in 0 until nbOfMessages) {
-            room.sendTextMessage(message + " #" + (i + 1))
+
+        // not sure why it's taking so long :/
+        wrapWithTimeout(90_000) {
+            Log.v("#E2E TEST", "${otherSession.myUserId.take(10)} tries to join room $roomID")
+            try {
+                otherSession.roomService().joinRoom(roomID)
+            } catch (ex: JoinRoomFailure.JoinedWithTimeout) {
+                // it's ok we will wait after
+            }
         }
-        // Wait 3 second more per message
-        await(latch, timeout = timeout + 3_000L * nbOfMessages)
+
+        Log.v("#E2E TEST", "${otherSession.myUserId} waiting for join echo ...")
+        retryWithBackoff {
+            val roomSummary = otherSession.getRoomSummary(roomID)
+            roomSummary != null && roomSummary.membership == Membership.JOIN
+        }
+    }
+
+    /**
+     * Reply in a thread
+     * @param room the room where to send the messages
+     * @param message the message to send
+     * @param numberOfMessages the number of time the message will be sent
+     */
+    suspend fun replyInThreadMessage(
+            room: Room,
+            message: String,
+            numberOfMessages: Int,
+            rootThreadEventId: String,
+            timeout: Long = TestConstants.timeOutMillis
+    ): List<TimelineEvent> {
+        val timeline = room.timelineService().createTimeline(null, TimelineSettings(10))
+        timeline.start()
+        val sentEvents = sendTextMessagesBatched(timeline, room, message, numberOfMessages, timeout, rootThreadEventId)
         timeline.dispose()
-
         // Check that all events has been created
-        assertEquals("Message number do not match $sentEvents", nbOfMessages.toLong(), sentEvents.size.toLong())
-
+        assertEquals("Message number do not match $sentEvents", numberOfMessages.toLong(), sentEvents.size.toLong())
         return sentEvents
     }
 
     // PRIVATE METHODS *****************************************************************************
 
-    /**
-     * Creates a unique account
-     *
-     * @param userNamePrefix the user name prefix
-     * @param password       the password
-     * @param testParams     test params about the session
-     * @return the session associated with the newly created account
-     */
-    private fun createAccount(userNamePrefix: String,
-                              password: String,
-                              testParams: SessionTestParams): Session {
+    private suspend fun createAccount(
+            userNamePrefix: String,
+            password: String,
+            testParams: SessionTestParams
+    ): Session {
         val session = createAccountAndSync(
-                userNamePrefix + "_" + System.currentTimeMillis() + UUID.randomUUID(),
+                userNamePrefix + "_" + accountNumber++ + "_" + UUID.randomUUID(),
                 password,
                 testParams
         )
         assertNotNull(session)
-        return session
+        return session.also {
+            // most of the test was created pre-MSC3061 so ensure compatibility
+            it.cryptoService().enableShareKeyOnInvite(false)
+            trackedSessions.add(session)
+        }
     }
 
-    /**
-     * Logs into an existing account
-     *
-     * @param userId     the userId to log in
-     * @param password   the password to log in
-     * @param testParams test params about the session
-     * @return the session associated with the existing account
-     */
-    fun logIntoAccount(userId: String,
-                       password: String,
-                       testParams: SessionTestParams): Session {
+    suspend fun logIntoAccount(
+            userId: String,
+            password: String,
+            testParams: SessionTestParams
+    ): Session {
         val session = logAccountAndSync(userId, password, testParams)
         assertNotNull(session)
-        return session
+        return session.also {
+            trackedSessions.add(session)
+        }
     }
 
-    /**
-     * Create an account and a dedicated session
-     *
-     * @param userName          the account username
-     * @param password          the password
-     * @param sessionTestParams parameters for the test
-     */
-    private fun createAccountAndSync(userName: String,
-                                     password: String,
-                                     sessionTestParams: SessionTestParams): Session {
+    private suspend fun createAccountAndSync(
+            userName: String,
+            password: String,
+            sessionTestParams: SessionTestParams
+    ): Session {
         val hs = createHomeServerConfig()
 
-        runBlockingTest {
+        wrapWithTimeout(TestConstants.timeOutMillis) {
             matrix.authenticationService.getLoginFlow(hs)
         }
 
-        runBlockingTest(timeout = 60_000) {
+        wrapWithTimeout(60_000L) {
             matrix.authenticationService
                     .getRegistrationWizard()
                     .createAccount(userName, password, null)
         }
 
         // Perform dummy step
-        val registrationResult = runBlockingTest(timeout = 60_000) {
+        val registrationResult = wrapWithTimeout(timeout = 60_000) {
             matrix.authenticationService
                     .getRegistrationWizard()
                     .dummy()
@@ -234,35 +465,22 @@ class CommonTestHelper(context: Context) {
 
         assertTrue(registrationResult is RegistrationResult.Success)
         val session = (registrationResult as RegistrationResult.Success).session
+        session.open()
         if (sessionTestParams.withInitialSync) {
-            syncSession(session, 60_000)
+            syncSession(session, 120_000)
         }
-
         return session
     }
 
-    /**
-     * Start an account login
-     *
-     * @param userName          the account username
-     * @param password          the password
-     * @param sessionTestParams session test params
-     */
-    private fun logAccountAndSync(userName: String,
-                                  password: String,
-                                  sessionTestParams: SessionTestParams): Session {
+    private suspend fun logAccountAndSync(userName: String, password: String, sessionTestParams: SessionTestParams): Session {
         val hs = createHomeServerConfig()
 
-        runBlockingTest {
-            matrix.authenticationService.getLoginFlow(hs)
-        }
+        matrix.authenticationService.getLoginFlow(hs)
 
-        val session = runBlockingTest {
-            matrix.authenticationService
-                    .getLoginWizard()
-                    .login(userName, password, "myDevice")
-        }
-
+        val session = matrix.authenticationService
+                .getLoginWizard()
+                .login(userName, password, "myDevice")
+        session.open()
         if (sessionTestParams.withInitialSync) {
             syncSession(session)
         }
@@ -276,23 +494,21 @@ class CommonTestHelper(context: Context) {
      * @param userName the account username
      * @param password the password
      */
-    fun logAccountWithError(userName: String,
-                            password: String): Throwable {
+    suspend fun logAccountWithError(
+            userName: String,
+            password: String
+    ): Throwable {
         val hs = createHomeServerConfig()
 
-        runBlockingTest {
-            matrix.authenticationService.getLoginFlow(hs)
-        }
+        matrix.authenticationService.getLoginFlow(hs)
 
         var requestFailure: Throwable? = null
-        runBlockingTest {
-            try {
-                matrix.authenticationService
-                        .getLoginWizard()
-                        .login(userName, password, "myDevice")
-            } catch (failure: Throwable) {
-                requestFailure = failure
-            }
+        try {
+            matrix.authenticationService
+                    .getLoginWizard()
+                    .login(userName, password, "myDevice")
+        } catch (failure: Throwable) {
+            requestFailure = failure
         }
 
         assertNotNull(requestFailure)
@@ -301,13 +517,6 @@ class CommonTestHelper(context: Context) {
 
     fun createEventListener(latch: CountDownLatch, predicate: (List<TimelineEvent>) -> Boolean): Timeline.Listener {
         return object : Timeline.Listener {
-            override fun onTimelineFailure(throwable: Throwable) {
-                // noop
-            }
-
-            override fun onNewTimelineEvents(eventIds: List<String>) {
-                // noop
-            }
 
             override fun onTimelineUpdated(snapshot: List<TimelineEvent>) {
                 if (predicate(snapshot)) {
@@ -323,64 +532,86 @@ class CommonTestHelper(context: Context) {
      * @param latch
      * @throws InterruptedException
      */
-    fun await(latch: CountDownLatch, timeout: Long? = TestConstants.timeOutMillis) {
-        assertTrue(latch.await(timeout ?: TestConstants.timeOutMillis, TimeUnit.MILLISECONDS))
-    }
-
-    fun retryPeriodicallyWithLatch(latch: CountDownLatch, condition: (() -> Boolean)) {
-        GlobalScope.launch {
-            while (true) {
-                delay(1000)
-                if (condition()) {
-                    latch.countDown()
-                    return@launch
+    fun await(latch: CountDownLatch, timeout: Long? = TestConstants.timeOutMillis, job: Job? = null) {
+        assertTrue(
+                "Timed out after " + timeout + "ms waiting for something to happen. See stacktrace for cause.",
+                latch.await(timeout ?: TestConstants.timeOutMillis, TimeUnit.MILLISECONDS).also {
+                    if (!it) {
+                        // cancel job on timeout
+                        job?.cancel("Await timeout")
+                    }
                 }
+        )
+    }
+
+    suspend fun retryPeriodically(timeout: Long = TestConstants.timeOutMillis, predicate: suspend () -> Boolean) {
+        wrapWithTimeout(timeout) {
+            while (!predicate()) {
+                runBlocking { delay(500) }
             }
         }
     }
 
-    fun waitWithLatch(timeout: Long? = TestConstants.timeOutMillis, block: (CountDownLatch) -> Unit) {
-        val latch = CountDownLatch(1)
-        block(latch)
-        await(latch, timeout)
-    }
-
-    fun <T> runBlockingTest(timeout: Long = TestConstants.timeOutMillis, block: suspend () -> T): T {
-        return runBlocking {
-            withTimeout(timeout) {
-                block()
+    private val backoff = listOf(60L, 75L, 100L, 300L, 300L, 500L, 1_000L, 1_000L, 1_500L, 1_500L, 3_000L)
+    suspend fun retryWithBackoff(
+            timeout: Long = TestConstants.timeOutMillis,
+            // we use on fail to let caller report a proper error that will show nicely in junit test result with correct line
+            // just call fail with your message
+            onFail: (() -> Unit)? = null,
+            predicate: suspend () -> Boolean,
+    ) {
+        var backoffTry = 0
+        val now = System.currentTimeMillis()
+        while (!predicate()) {
+            Timber.v("## retryWithBackoff Trial nb $backoffTry")
+            withContext(Dispatchers.IO) {
+                delay(backoff[backoffTry])
+            }
+            backoffTry++
+            if (backoffTry >= backoff.size) backoffTry = 0
+            if (System.currentTimeMillis() - now > timeout) {
+                Timber.v("## retryWithBackoff Trial fail")
+                onFail?.invoke()
+                return
             }
         }
     }
 
-    // Transform a method with a MatrixCallback to a synchronous method
-    inline fun <reified T> doSync(timeout: Long? = TestConstants.timeOutMillis, block: (MatrixCallback<T>) -> Unit): T {
-        val lock = CountDownLatch(1)
-        var result: T? = null
-
-        val callback = object : TestMatrixCallback<T>(lock) {
-            override fun onSuccess(data: T) {
-                result = data
-                super.onSuccess(data)
+    suspend fun <T> waitForCallback(timeout: Long = TestConstants.timeOutMillis, block: (MatrixCallback<T>) -> Unit): T {
+        return wrapWithTimeout(timeout) {
+            suspendCoroutine { continuation ->
+                val callback = object : MatrixCallback<T> {
+                    override fun onSuccess(data: T) {
+                        continuation.resume(data)
+                    }
+                }
+                block(callback)
             }
         }
+    }
 
-        block.invoke(callback)
-
-        await(lock, timeout)
-
-        assertNotNull(result)
-        return result!!
+    suspend fun <T> waitForCallbackError(timeout: Long = TestConstants.timeOutMillis, block: (MatrixCallback<T>) -> Unit): Throwable {
+        return wrapWithTimeout(timeout) {
+            suspendCoroutine { continuation ->
+                val callback = object : MatrixCallback<T> {
+                    override fun onFailure(failure: Throwable) {
+                        continuation.resume(failure)
+                    }
+                }
+                block(callback)
+            }
+        }
     }
 
     /**
      * Clear all provided sessions
      */
-    fun Iterable<Session>.signOutAndClose() = forEach { signOutAndClose(it) }
+    suspend fun Iterable<Session>.signOutAndClose() = forEach { signOutAndClose(it) }
 
-    fun signOutAndClose(session: Session) {
-        runBlockingTest(timeout = 60_000) {
-            session.signOut(true)
+    suspend fun signOutAndClose(session: Session) {
+        trackedSessions.remove(session)
+        wrapWithTimeout(timeout = 60_000L) {
+            session.signOutService().signOut(true)
         }
         // no need signout will close
         // session.close()

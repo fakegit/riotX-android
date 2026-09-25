@@ -20,19 +20,24 @@ import io.realm.RealmObject
 import io.realm.RealmResults
 import io.realm.annotations.Index
 import io.realm.annotations.LinkingObjects
+import org.matrix.android.sdk.api.session.room.read.ReadService
 import org.matrix.android.sdk.internal.extensions.assertIsManaged
 
-internal open class TimelineEventEntity(var localId: Long = 0,
-                                        @Index var eventId: String = "",
-                                        @Index var roomId: String = "",
-                                        @Index var displayIndex: Int = 0,
-                                        var root: EventEntity? = null,
-                                        var annotations: EventAnnotationsSummaryEntity? = null,
-                                        var senderName: String? = null,
-                                        var isUniqueDisplayName: Boolean = false,
-                                        var senderAvatar: String? = null,
-                                        var senderMembershipEventId: String? = null,
-                                        var readReceipts: ReadReceiptsSummaryEntity? = null
+internal open class TimelineEventEntity(
+        var localId: Long = 0,
+        @Index var eventId: String = "",
+        @Index var roomId: String = "",
+        @Index var displayIndex: Int = 0,
+        var root: EventEntity? = null,
+        var annotations: EventAnnotationsSummaryEntity? = null,
+        var senderName: String? = null,
+        var isUniqueDisplayName: Boolean = false,
+        var senderAvatar: String? = null,
+        var senderMembershipEventId: String? = null,
+        // ownedByThreadChunk indicates that the current TimelineEventEntity belongs
+        // to a thread chunk and is a temporarily event.
+        var ownedByThreadChunk: Boolean = false,
+        var readReceipts: ReadReceiptsSummaryEntity? = null
 ) : RealmObject() {
 
     @LinkingObjects("timelineEvents")
@@ -46,7 +51,9 @@ internal fun TimelineEventEntity.deleteOnCascade(canDeleteRoot: Boolean) {
     if (canDeleteRoot) {
         root?.deleteFromRealm()
     }
-    annotations?.deleteOnCascade()
-    readReceipts?.deleteOnCascade()
     deleteFromRealm()
+}
+
+internal fun TimelineEventEntity.getThreadId(): String {
+    return root?.rootThreadEventId ?: ReadService.THREAD_ID_MAIN
 }

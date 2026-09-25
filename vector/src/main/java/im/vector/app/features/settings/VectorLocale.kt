@@ -1,68 +1,67 @@
 /*
- * Copyright 2018 New Vector Ltd
+ * Copyright 2018-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.settings
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import androidx.core.content.edit
-import im.vector.app.BuildConfig
-import im.vector.app.R
-import im.vector.app.core.di.DefaultSharedPreferences
+import im.vector.app.core.di.DefaultPreferences
+import im.vector.app.core.resources.BuildMeta
+import im.vector.lib.strings.CommonStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.IllformedLocaleException
 import java.util.Locale
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
- * Object to manage the Locale choice of the user
+ * Object to manage the Locale choice of the user.
  */
-object VectorLocale {
-    private const val APPLICATION_LOCALE_COUNTRY_KEY = "APPLICATION_LOCALE_COUNTRY_KEY"
-    private const val APPLICATION_LOCALE_VARIANT_KEY = "APPLICATION_LOCALE_VARIANT_KEY"
-    private const val APPLICATION_LOCALE_LANGUAGE_KEY = "APPLICATION_LOCALE_LANGUAGE_KEY"
-    private const val APPLICATION_LOCALE_SCRIPT_KEY = "APPLICATION_LOCALE_SCRIPT_KEY"
+@Singleton
+class VectorLocale @Inject constructor(
+        private val context: Context,
+        private val buildMeta: BuildMeta,
+        @DefaultPreferences
+        private val preferences: SharedPreferences,
+) {
+    companion object {
+        const val APPLICATION_LOCALE_COUNTRY_KEY = "APPLICATION_LOCALE_COUNTRY_KEY"
+        const val APPLICATION_LOCALE_VARIANT_KEY = "APPLICATION_LOCALE_VARIANT_KEY"
+        const val APPLICATION_LOCALE_LANGUAGE_KEY = "APPLICATION_LOCALE_LANGUAGE_KEY"
+        private const val APPLICATION_LOCALE_SCRIPT_KEY = "APPLICATION_LOCALE_SCRIPT_KEY"
+        private const val ISO_15924_LATN = "Latn"
+    }
 
+    @Suppress("DEPRECATION")
     private val defaultLocale = Locale("en", "US")
 
-    private const val ISO_15924_LATN = "Latn"
-
     /**
-     * The cache of supported application languages
+     * The cache of supported application languages.
      */
     private val supportedLocales = mutableListOf<Locale>()
 
     /**
-     * Provides the current application locale
+     * Provides the current application locale.
      */
     var applicationLocale = defaultLocale
         private set
 
-    private lateinit var context: Context
-
     /**
-     * Init this object
+     * Init this singleton.
      */
-    fun init(context: Context) {
-        this.context = context
-        val preferences = DefaultSharedPreferences.getInstance(context)
-
+    @Suppress("DEPRECATION")
+    fun init() {
         if (preferences.contains(APPLICATION_LOCALE_LANGUAGE_KEY)) {
-            applicationLocale = Locale(preferences.getString(APPLICATION_LOCALE_LANGUAGE_KEY, "")!!,
+            applicationLocale = Locale(
+                    preferences.getString(APPLICATION_LOCALE_LANGUAGE_KEY, "")!!,
                     preferences.getString(APPLICATION_LOCALE_COUNTRY_KEY, "")!!,
                     preferences.getString(APPLICATION_LOCALE_VARIANT_KEY, "")!!
             )
@@ -70,8 +69,8 @@ object VectorLocale {
             applicationLocale = Locale.getDefault()
 
             // detect if the default language is used
-            val defaultStringValue = getString(context, defaultLocale, R.string.resources_country_code)
-            if (defaultStringValue == getString(context, applicationLocale, R.string.resources_country_code)) {
+            val defaultStringValue = getString(context, defaultLocale, CommonStrings.resources_country_code)
+            if (defaultStringValue == getString(context, applicationLocale, CommonStrings.resources_country_code)) {
                 applicationLocale = defaultLocale
             }
 
@@ -85,7 +84,7 @@ object VectorLocale {
     fun saveApplicationLocale(locale: Locale) {
         applicationLocale = locale
 
-        DefaultSharedPreferences.getInstance(context).edit {
+        preferences.edit {
             val language = locale.language
             if (language.isEmpty()) {
                 remove(APPLICATION_LOCALE_LANGUAGE_KEY)
@@ -117,10 +116,10 @@ object VectorLocale {
     }
 
     /**
-     * Get String from a locale
+     * Get String from a locale.
      *
-     * @param context    the context
-     * @param locale     the locale
+     * @param context the context
+     * @param locale the locale
      * @param resourceId the string resource id
      * @return the localized string
      */
@@ -137,7 +136,7 @@ object VectorLocale {
     }
 
     /**
-     * Init the supported application locales list
+     * Init the supported application locales list.
      */
     private fun initApplicationLocales() {
         val knownLocalesSet = HashSet<Triple<String, String, String>>()
@@ -148,9 +147,9 @@ object VectorLocale {
             for (locale in availableLocales) {
                 knownLocalesSet.add(
                         Triple(
-                                getString(context, locale, R.string.resources_language),
-                                getString(context, locale, R.string.resources_country_code),
-                                getString(context, locale, R.string.resources_script)
+                                getString(context, locale, CommonStrings.resources_language),
+                                getString(context, locale, CommonStrings.resources_country_code),
+                                getString(context, locale, CommonStrings.resources_script)
                         )
                 )
             }
@@ -158,9 +157,9 @@ object VectorLocale {
             Timber.e(e, "## getApplicationLocales() : failed")
             knownLocalesSet.add(
                     Triple(
-                            context.getString(R.string.resources_language),
-                            context.getString(R.string.resources_country_code),
-                            context.getString(R.string.resources_script)
+                            context.getString(CommonStrings.resources_language),
+                            context.getString(CommonStrings.resources_country_code),
+                            context.getString(CommonStrings.resources_script)
                     )
             )
         }
@@ -173,7 +172,7 @@ object VectorLocale {
                         .setScript(script)
                         .build()
             } catch (exception: IllformedLocaleException) {
-                if (BuildConfig.DEBUG) {
+                if (buildMeta.isDebug) {
                     throw exception
                 }
                 // Ignore this locale in production
@@ -181,14 +180,14 @@ object VectorLocale {
             }
         }
                 // sort by human display names
-                .sortedBy { localeToLocalisedString(it).toLowerCase(it) }
+                .sortedBy { localeToLocalisedString(it).lowercase(it) }
 
         supportedLocales.clear()
         supportedLocales.addAll(list)
     }
 
     /**
-     * Convert a locale to a string
+     * Convert a locale to a string.
      *
      * @param locale the locale to convert
      * @return the string
@@ -211,7 +210,7 @@ object VectorLocale {
     }
 
     /**
-     * Information about the locale in the current locale
+     * Information about the locale in the current locale.
      *
      * @param locale the locale to get info from
      * @return the string

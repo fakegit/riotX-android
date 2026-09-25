@@ -1,35 +1,30 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roomdirectory.picker
 
+import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.view.isInvisible
+import androidx.core.view.isVisible
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
 import im.vector.app.R
+import im.vector.app.core.epoxy.ClickListener
 import im.vector.app.core.epoxy.VectorEpoxyHolder
 import im.vector.app.core.epoxy.VectorEpoxyModel
+import im.vector.app.core.epoxy.onClick
 import im.vector.app.core.extensions.setTextOrHide
 import im.vector.app.core.glide.GlideApp
 
-@EpoxyModelClass(layout = R.layout.item_room_directory)
-abstract class RoomDirectoryItem : VectorEpoxyModel<RoomDirectoryItem.Holder>() {
+@EpoxyModelClass
+abstract class RoomDirectoryItem : VectorEpoxyModel<RoomDirectoryItem.Holder>(R.layout.item_room_directory) {
 
     @EpoxyAttribute
     var directoryAvatarUrl: String? = null
@@ -44,18 +39,23 @@ abstract class RoomDirectoryItem : VectorEpoxyModel<RoomDirectoryItem.Holder>() 
     var includeAllNetworks: Boolean = false
 
     @EpoxyAttribute
-    var globalListener: (() -> Unit)? = null
+    var checked: Boolean = false
+
+    @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
+    var globalListener: ClickListener? = null
 
     override fun bind(holder: Holder) {
         super.bind(holder)
-        holder.rootView.setOnClickListener { globalListener?.invoke() }
+        holder.rootView.onClick(globalListener)
 
         // Avatar
         GlideApp.with(holder.avatarView)
                 .load(directoryAvatarUrl)
-                .apply {
+                .let {
                     if (!includeAllNetworks) {
-                        placeholder(R.drawable.network_matrix)
+                        it.placeholder(R.drawable.network_matrix)
+                    } else {
+                        it
                     }
                 }
                 .into(holder.avatarView)
@@ -63,6 +63,7 @@ abstract class RoomDirectoryItem : VectorEpoxyModel<RoomDirectoryItem.Holder>() 
 
         holder.nameView.text = directoryName
         holder.descriptionView.setTextOrHide(directoryDescription)
+        holder.checkedView.isVisible = checked
     }
 
     class Holder : VectorEpoxyHolder() {
@@ -71,5 +72,6 @@ abstract class RoomDirectoryItem : VectorEpoxyModel<RoomDirectoryItem.Holder>() 
         val avatarView by bind<ImageView>(R.id.itemRoomDirectoryAvatar)
         val nameView by bind<TextView>(R.id.itemRoomDirectoryName)
         val descriptionView by bind<TextView>(R.id.itemRoomDirectoryDescription)
+        val checkedView by bind<View>(R.id.itemRoomDirectoryChecked)
     }
 }

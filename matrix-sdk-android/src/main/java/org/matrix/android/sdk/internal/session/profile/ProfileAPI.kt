@@ -33,6 +33,7 @@ internal interface ProfileAPI {
      * Get the combined profile information for this user.
      * This API may be used to fetch the user's own profile information or other users; either locally or on remote homeservers.
      * This API may return keys which are not limited to displayname or avatar_url.
+     * If server is configured as limit_profile_requests_to_users_who_share_rooms: true then response can be HTTP 403.
      * @param userId the user id to fetch profile info
      */
     @GET(NetworkConstants.URI_API_PREFIX_PATH_R0 + "profile/{userId}")
@@ -45,18 +46,22 @@ internal interface ProfileAPI {
     suspend fun getThreePIDs(): AccountThreePidsResponse
 
     /**
-     * Change user display name
+     * Change user display name.
      */
     @PUT(NetworkConstants.URI_API_PREFIX_PATH_R0 + "profile/{userId}/displayname")
-    suspend fun setDisplayName(@Path("userId") userId: String,
-                               @Body body: SetDisplayNameBody)
+    suspend fun setDisplayName(
+            @Path("userId") userId: String,
+            @Body body: SetDisplayNameBody
+    )
 
     /**
      * Change user avatar url.
      */
     @PUT(NetworkConstants.URI_API_PREFIX_PATH_R0 + "profile/{userId}/avatar_url")
-    suspend fun setAvatarUrl(@Path("userId") userId: String,
-                             @Body body: SetAvatarUrlBody)
+    suspend fun setAvatarUrl(
+            @Path("userId") userId: String,
+            @Body body: SetAvatarUrlBody
+    )
 
     /**
      * Bind a threePid
@@ -85,11 +90,13 @@ internal interface ProfileAPI {
     suspend fun addMsisdn(@Body body: AddMsisdnBody): AddMsisdnResponse
 
     /**
-     * Validate Msisdn code (same model than for Identity server API)
+     * Validate Msisdn code (same model than for identity server API).
      */
     @POST
-    suspend fun validateMsisdn(@Url url: String,
-                               @Body params: ValidationCodeBody): SuccessResult
+    suspend fun validateMsisdn(
+            @Url url: String,
+            @Body params: ValidationCodeBody
+    ): SuccessResult
 
     /**
      * Ref: https://matrix.org/docs/spec/client_server/r0.6.1#post-matrix-client-r0-account-3pid-add

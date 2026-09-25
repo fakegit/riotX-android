@@ -16,6 +16,8 @@
 
 package org.matrix.android.sdk.api.session.room.model.message
 
+import org.matrix.android.sdk.api.session.events.model.EventType
+
 object MessageType {
     const val MSGTYPE_TEXT = "m.text"
     const val MSGTYPE_EMOTE = "m.emote"
@@ -25,15 +27,26 @@ object MessageType {
     const val MSGTYPE_VIDEO = "m.video"
     const val MSGTYPE_LOCATION = "m.location"
     const val MSGTYPE_FILE = "m.file"
-    const val MSGTYPE_OPTIONS = "org.matrix.options"
-    const val MSGTYPE_RESPONSE = "org.matrix.response"
-    const val MSGTYPE_POLL_CLOSED = "org.matrix.poll_closed"
-    const val MSGTYPE_VERIFICATION_REQUEST = "m.key.verification.request"
+
+    const val MSGTYPE_VERIFICATION_REQUEST = EventType.KEY_VERIFICATION_REQUEST
 
     // Add, in local, a fake message type in order to StickerMessage can inherit Message class
     // Because sticker isn't a message type but a event type without msgtype field
     const val MSGTYPE_STICKER_LOCAL = "org.matrix.android.sdk.sticker"
 
+    // Fake message types for poll events to be able to inherit them from MessageContent
+    // Because poll events are not message events and they don't have msgtype field
+    const val MSGTYPE_POLL_START = "org.matrix.android.sdk.poll.start"
+    const val MSGTYPE_POLL_RESPONSE = "org.matrix.android.sdk.poll.response"
+    const val MSGTYPE_POLL_END = "org.matrix.android.sdk.poll.end"
+
     const val MSGTYPE_CONFETTI = "nic.custom.confetti"
-    const val MSGTYPE_SNOW = "io.element.effect.snowfall"
+    const val MSGTYPE_SNOWFALL = "io.element.effect.snowfall"
+
+    // Fake message types for live location events to be able to inherit them from MessageContent
+    const val MSGTYPE_BEACON_INFO = "org.matrix.android.sdk.beacon.info"
+    const val MSGTYPE_BEACON_LOCATION_DATA = "org.matrix.android.sdk.beacon.location.data"
+
+    // Fake message types for voice broadcast events to be able to inherit them from MessageContent
+    const val MSGTYPE_VOICE_BROADCAST_INFO = "io.element.voicebroadcast.info"
 }

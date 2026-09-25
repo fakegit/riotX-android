@@ -22,6 +22,7 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import timber.log.Timber
 import javax.inject.Inject
@@ -31,8 +32,10 @@ internal interface NetworkCallbackStrategy {
     fun unregister()
 }
 
-internal class FallbackNetworkCallbackStrategy @Inject constructor(private val context: Context,
-                                                                   private val networkInfoReceiver: NetworkInfoReceiver) : NetworkCallbackStrategy {
+internal class FallbackNetworkCallbackStrategy @Inject constructor(
+        private val context: Context,
+        private val networkInfoReceiver: NetworkInfoReceiver
+) : NetworkCallbackStrategy {
 
     @Suppress("DEPRECATION")
     val filter = IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION)
@@ -41,7 +44,12 @@ internal class FallbackNetworkCallbackStrategy @Inject constructor(private val c
         networkInfoReceiver.isConnectedCallback = {
             hasChanged()
         }
-        context.registerReceiver(networkInfoReceiver, filter)
+        ContextCompat.registerReceiver(
+                context,
+                networkInfoReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     override fun unregister() {
@@ -68,7 +76,15 @@ internal class PreferredNetworkCallbackStrategy @Inject constructor(context: Con
 
     override fun register(hasChanged: () -> Unit) {
         hasChangedCallback = hasChanged
-        conn.registerDefaultNetworkCallback(networkCallback)
+        // Add a try catch for safety
+        // XXX: It happens when running all tests in CI, at some points we reach a limit here causing TooManyRequestsException
+        // and crashing the sync thread. We might have problem here, would need some investigation
+        // for now adding a catch to allow CI to continue running
+        try {
+            conn.registerDefaultNetworkCallback(networkCallback)
+        } catch (t: Throwable) {
+            Timber.e(t, "Unable to register default network callback")
+        }
     }
 
     override fun unregister() {

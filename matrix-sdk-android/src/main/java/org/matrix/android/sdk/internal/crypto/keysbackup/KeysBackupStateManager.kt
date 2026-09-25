@@ -17,6 +17,7 @@
 package org.matrix.android.sdk.internal.crypto.keysbackup
 
 import android.os.Handler
+import org.matrix.android.sdk.api.extensions.tryOrNull
 import org.matrix.android.sdk.api.session.crypto.keysbackup.KeysBackupState
 import org.matrix.android.sdk.api.session.crypto.keysbackup.KeysBackupStateListener
 import timber.log.Timber
@@ -33,32 +34,35 @@ internal class KeysBackupStateManager(private val uiHandler: Handler) {
             field = newState
 
             // Notify listeners about the state change, on the ui thread
-            uiHandler.post {
-                synchronized(listeners) {
-                    listeners.forEach {
+            synchronized(listeners) {
+                listeners.forEach {
+                    uiHandler.post {
                         // Use newState because state may have already changed again
-                        it.onStateChange(newState)
+                        tryOrNull {
+                            it.onStateChange(newState)
+                        }
                     }
                 }
             }
         }
 
     val isEnabled: Boolean
-        get() = state == KeysBackupState.ReadyToBackUp
-                || state == KeysBackupState.WillBackUp
-                || state == KeysBackupState.BackingUp
+        get() = state == KeysBackupState.ReadyToBackUp ||
+                state == KeysBackupState.WillBackUp ||
+                state == KeysBackupState.BackingUp
 
     // True if unknown or bad state
-    val isStucked: Boolean
-        get() = state == KeysBackupState.Unknown
-                || state == KeysBackupState.Disabled
-                || state == KeysBackupState.WrongBackUpVersion
-                || state == KeysBackupState.NotTrusted
+    val isStuck: Boolean
+        get() = state == KeysBackupState.Unknown ||
+                state == KeysBackupState.Disabled ||
+                state == KeysBackupState.WrongBackUpVersion ||
+                state == KeysBackupState.NotTrusted
 
     fun addListener(listener: KeysBackupStateListener) {
         synchronized(listeners) {
             listeners.add(listener)
         }
+        listener.onStateChange(state)
     }
 
     fun removeListener(listener: KeysBackupStateListener) {

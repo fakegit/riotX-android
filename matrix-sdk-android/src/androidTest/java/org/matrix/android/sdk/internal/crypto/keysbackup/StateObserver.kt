@@ -16,20 +16,23 @@
 
 package org.matrix.android.sdk.internal.crypto.keysbackup
 
+import android.util.Log
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.matrix.android.sdk.api.session.crypto.keysbackup.KeysBackupService
 import org.matrix.android.sdk.api.session.crypto.keysbackup.KeysBackupState
 import org.matrix.android.sdk.api.session.crypto.keysbackup.KeysBackupStateListener
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import java.util.concurrent.CountDownLatch
 
 /**
  * This class observe the state change of a KeysBackup object and provide a method to check the several state change
  * It checks all state transitions and detected forbidden transition
  */
-internal class StateObserver(private val keysBackup: KeysBackupService,
-                             private val latch: CountDownLatch? = null,
-                             private val expectedStateChange: Int = -1) : KeysBackupStateListener {
+internal class StateObserver(
+        private val keysBackup: KeysBackupService,
+        private val latch: CountDownLatch? = null,
+        private val expectedStateChange: Int = -1
+) : KeysBackupStateListener {
 
     private val allowedStateTransitions = listOf(
             KeysBackupState.BackingUp to KeysBackupState.ReadyToBackUp,
@@ -49,10 +52,13 @@ internal class StateObserver(private val keysBackup: KeysBackupService,
             KeysBackupState.NotTrusted to KeysBackupState.CheckingBackUpOnHomeserver,
             // This transition happens when we trust the device
             KeysBackupState.NotTrusted to KeysBackupState.ReadyToBackUp,
+            // This transition happens when we create a new backup from an untrusted one
+            KeysBackupState.NotTrusted to KeysBackupState.Enabling,
 
             KeysBackupState.ReadyToBackUp to KeysBackupState.WillBackUp,
 
             KeysBackupState.Unknown to KeysBackupState.CheckingBackUpOnHomeserver,
+            KeysBackupState.Unknown to KeysBackupState.Enabling,
 
             KeysBackupState.WillBackUp to KeysBackupState.BackingUp,
 
@@ -88,11 +94,12 @@ internal class StateObserver(private val keysBackup: KeysBackupService,
     }
 
     override fun onStateChange(newState: KeysBackupState) {
+        Log.d("#E2E", "Keybackup onStateChange $newState")
         stateList.add(newState)
 
         // Check that state transition is valid
-        if (stateList.size >= 2
-                && !allowedStateTransitions.contains(stateList[stateList.size - 2] to newState)) {
+        if (stateList.size >= 2 &&
+                !allowedStateTransitions.contains(stateList[stateList.size - 2] to newState)) {
             // Forbidden transition detected
             lastTransitionError = "Forbidden transition detected from " + stateList[stateList.size - 2] + " to " + newState
         }

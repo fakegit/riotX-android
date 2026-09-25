@@ -16,11 +16,8 @@
 
 package org.matrix.android.sdk.internal.crypto.store.db.model
 
-import org.matrix.android.sdk.internal.crypto.store.db.deserializeFromRealm
-import org.matrix.android.sdk.internal.crypto.store.db.serializeForRealm
 import io.realm.RealmObject
 import io.realm.annotations.PrimaryKey
-import org.matrix.olm.OlmAccount
 
 internal open class CryptoMetadataEntity(
         // The current user id.
@@ -33,6 +30,13 @@ internal open class CryptoMetadataEntity(
         var deviceSyncToken: String? = null,
         // Settings for blacklisting unverified devices.
         var globalBlacklistUnverifiedDevices: Boolean = false,
+        // setting to enable or disable key gossiping
+        var globalEnableKeyGossiping: Boolean = true,
+
+        // MSC3061: Sharing room keys for past messages
+        // If set to true key history will be shared to invited users with respect to room setting
+        var enableKeyForwardingOnInvite: Boolean = false,
+
         // The keys backup version currently used. Null means no backup.
         var backupVersion: String? = null,
 
@@ -46,15 +50,4 @@ internal open class CryptoMetadataEntity(
         var keyBackupRecoveryKeyVersion: String? = null
 
 //        var crossSigningInfoEntity: CrossSigningInfoEntity? = null
-) : RealmObject() {
-
-    // Deserialize data
-    fun getOlmAccount(): OlmAccount? {
-        return deserializeFromRealm(olmAccountData)
-    }
-
-    // Serialize data
-    fun putOlmAccount(olmAccount: OlmAccount?) {
-        olmAccountData = serializeForRealm(olmAccount)
-    }
-}
+) : RealmObject()

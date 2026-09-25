@@ -25,6 +25,7 @@ import org.matrix.android.sdk.api.session.room.model.message.MessageContent
 import org.matrix.android.sdk.api.session.room.model.message.MessageType
 import org.matrix.android.sdk.api.session.room.send.SendState
 import org.matrix.android.sdk.api.session.room.timeline.TimelineEvent
+import org.matrix.android.sdk.api.session.room.timeline.getRelationContent
 import org.matrix.android.sdk.internal.database.RealmSessionProvider
 import org.matrix.android.sdk.internal.database.asyncTransaction
 import org.matrix.android.sdk.internal.database.mapper.TimelineEventMapper
@@ -43,16 +44,20 @@ import org.matrix.android.sdk.internal.session.room.summary.RoomSummaryUpdater
 import org.matrix.android.sdk.internal.session.room.timeline.TimelineInput
 import org.matrix.android.sdk.internal.task.TaskExecutor
 import org.matrix.android.sdk.internal.util.awaitTransaction
+import org.matrix.android.sdk.internal.util.time.Clock
 import timber.log.Timber
 import java.util.UUID
 import javax.inject.Inject
 
-internal class LocalEchoRepository @Inject constructor(@SessionDatabase private val monarchy: Monarchy,
-                                                       private val taskExecutor: TaskExecutor,
-                                                       private val realmSessionProvider: RealmSessionProvider,
-                                                       private val roomSummaryUpdater: RoomSummaryUpdater,
-                                                       private val timelineInput: TimelineInput,
-                                                       private val timelineEventMapper: TimelineEventMapper) {
+internal class LocalEchoRepository @Inject constructor(
+        @SessionDatabase private val monarchy: Monarchy,
+        private val taskExecutor: TaskExecutor,
+        private val realmSessionProvider: RealmSessionProvider,
+        private val roomSummaryUpdater: RoomSummaryUpdater,
+        private val timelineInput: TimelineInput,
+        private val timelineEventMapper: TimelineEventMapper,
+        private val clock: Clock,
+) {
 
     fun createLocalEcho(event: Event) {
         val roomId = event.roomId ?: throw IllegalStateException("You should have set a roomId for your event")
@@ -61,7 +66,7 @@ internal class LocalEchoRepository @Inject constructor(@SessionDatabase private 
         event.type ?: throw IllegalStateException("You should have set a type for your event")
 
         val timelineEventEntity = realmSessionProvider.withRealm { realm ->
-            val eventEntity = event.toEntity(roomId, SendState.UNSENT, System.currentTimeMillis())
+            val eventEntity = event.toEntity(roomId, SendState.UNSENT, clock.epochMillis())
             val roomMemberHelper = RoomMemberHelper(realm, roomId)
             val myUser = roomMemberHelper.getLastRoomMember(senderId)
             val localId = UUID.randomUUID().mostSignificantBits
@@ -77,7 +82,7 @@ internal class LocalEchoRepository @Inject constructor(@SessionDatabase private 
         val timelineEvent = timelineEventMapper.map(timelineEventEntity)
         timelineInput.onLocalEchoCreated(roomId = roomId, timelineEvent = timelineEvent)
         taskExecutor.executorScope.asyncTransaction(monarchy) { realm ->
-            val eventInsertEntity = EventInsertEntity(event.eventId, event.type).apply {
+            val eventInsertEntity = EventInsertEntity(event.eventId, event.type, canBeProcessed = true).apply {
                 this.insertType = EventInsertType.LOCAL_ECHO
             }
             realm.insert(eventInsertEntity)
@@ -87,8 +92,8 @@ internal class LocalEchoRepository @Inject constructor(@SessionDatabase private 
         }
     }
 
-    fun updateSendState(eventId: String, roomId: String?, sendState: SendState) {
-        Timber.v("## SendEvent: [${System.currentTimeMillis()}] Update local state of $eventId to ${sendState.name}")
+    fun updateSendState(eventId: String, roomId: String?, sendState: SendState, sendStateDetails: String? = null) {
+        Timber.v("## SendEvent: [${clock.epochMillis()}] Update local state of $eventId to ${sendState.name}")
         timelineInput.onLocalEchoUpdated(roomId = roomId ?: "", eventId = eventId, sendState = sendState)
         updateEchoAsync(eventId) { realm, sendingEventEntity ->
             if (sendState == SendState.SENT && sendingEventEntity.sendState == SendState.SYNCED) {
@@ -96,6 +101,7 @@ internal class LocalEchoRepository @Inject constructor(@SessionDatabase private 
             } else {
                 sendingEventEntity.sendState = sendState
             }
+            sendingEventEntity.sendStateDetails = sendStateDetails
             roomSummaryUpdater.updateSendingInformation(realm, sendingEventEntity.roomId)
         }
     }
@@ -137,7 +143,7 @@ internal class LocalEchoRepository @Inject constructor(@SessionDatabase private 
         }
     }
 
-     fun deleteFailedEchoAsync(roomId: String, eventId: String?) {
+    fun deleteFailedEchoAsync(roomId: String, eventId: String?) {
         monarchy.runTransactionSync { realm ->
             TimelineEventEntity.where(realm, roomId = roomId, eventId = eventId ?: "").findFirst()?.deleteFromRealm()
             EventEntity.where(realm, eventId = eventId ?: "").findFirst()?.deleteFromRealm()
@@ -161,6 +167,7 @@ internal class LocalEchoRepository @Inject constructor(@SessionDatabase private 
             val timelineEvents = TimelineEventEntity.where(realm, roomId, eventIds).findAll()
             timelineEvents.forEach {
                 it.root?.sendState = sendState
+                it.root?.sendStateDetails = null
             }
             roomSummaryUpdater.updateSendingInformation(realm, roomId)
         }
@@ -195,7 +202,7 @@ internal class LocalEchoRepository @Inject constructor(@SessionDatabase private 
                                             // need to resend the attachment
                                             true
                                         }
-                                        else                      -> {
+                                        else -> {
                                             Timber.e("Cannot resend message ${event.root.getClearType()} / ${content.msgType}")
                                             false
                                         }
@@ -205,12 +212,32 @@ internal class LocalEchoRepository @Inject constructor(@SessionDatabase private 
                                     false
                                 }
                             }
-                            else               -> {
+                            else -> {
                                 Timber.e("Unsupported message to resend ${event.root.getClearType()}")
                                 false
                             }
                         }
                     }
+        }
+    }
+
+    /**
+     * Returns the latest known thread event message, or the rootThreadEventId if no other event found.
+     */
+    fun getLatestThreadEvent(rootThreadEventId: String): String {
+        return realmSessionProvider.withRealm { realm ->
+            EventEntity.where(realm, eventId = rootThreadEventId).findFirst()?.threadSummaryLatestMessage?.eventId
+        } ?: rootThreadEventId
+    }
+
+    fun getRelatedPollEvent(timelineEvent: TimelineEvent): TimelineEvent? {
+        val roomId = timelineEvent.roomId
+        val pollEventId = timelineEvent.getRelationContent()?.eventId ?: return null
+
+        return realmSessionProvider.withRealm { realm ->
+            TimelineEventEntity.where(realm, roomId = roomId, eventId = pollEventId).findFirst()?.let {
+                timelineEventMapper.map(it)
+            }
         }
     }
 }

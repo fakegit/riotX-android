@@ -1,76 +1,54 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.widgets
 
 import android.net.Uri
-import androidx.lifecycle.viewModelScope
-import com.airbnb.mvrx.ActivityViewModelContext
 import com.airbnb.mvrx.Fail
-import com.airbnb.mvrx.FragmentViewModelContext
 import com.airbnb.mvrx.Loading
-import com.airbnb.mvrx.MvRxViewModelFactory
+import com.airbnb.mvrx.MavericksViewModelFactory
 import com.airbnb.mvrx.Success
-import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.VectorViewModel
 import im.vector.app.core.resources.StringProvider
 import im.vector.app.features.widgets.permissions.WidgetPermissionsHelper
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.query.QueryStringValue
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.session.events.model.Content
-import org.matrix.android.sdk.api.session.events.model.EventType
-import org.matrix.android.sdk.api.session.events.model.toModel
+import org.matrix.android.sdk.api.session.getRoom
 import org.matrix.android.sdk.api.session.integrationmanager.IntegrationManagerService
-import org.matrix.android.sdk.api.session.room.model.PowerLevelsContent
-import org.matrix.android.sdk.api.session.room.powerlevels.PowerLevelsHelper
 import org.matrix.android.sdk.api.session.widgets.WidgetManagementFailure
-import org.matrix.android.sdk.rx.mapOptional
-import org.matrix.android.sdk.rx.rx
-import org.matrix.android.sdk.rx.unwrap
+import org.matrix.android.sdk.flow.flow
 import timber.log.Timber
 import javax.net.ssl.HttpsURLConnection
 
-class WidgetViewModel @AssistedInject constructor(@Assisted val initialState: WidgetViewState,
-                                                  widgetPostAPIHandlerFactory: WidgetPostAPIHandler.Factory,
-                                                  private val stringProvider: StringProvider,
-                                                  private val session: Session)
-    : VectorViewModel<WidgetViewState, WidgetAction, WidgetViewEvents>(initialState),
+class WidgetViewModel @AssistedInject constructor(
+        @Assisted val initialState: WidgetViewState,
+        widgetPostAPIHandlerFactory: WidgetPostAPIHandler.Factory,
+        private val stringProvider: StringProvider,
+        private val session: Session
+) :
+        VectorViewModel<WidgetViewState, WidgetAction, WidgetViewEvents>(initialState),
         WidgetPostAPIHandler.NavigationCallback,
         IntegrationManagerService.Listener {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: WidgetViewState): WidgetViewModel
+    interface Factory : MavericksAssistedViewModelFactory<WidgetViewModel, WidgetViewState> {
+        override fun create(initialState: WidgetViewState): WidgetViewModel
     }
 
-    companion object : MvRxViewModelFactory<WidgetViewModel, WidgetViewState> {
-
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: WidgetViewState): WidgetViewModel? {
-            val factory = when (viewModelContext) {
-                is FragmentViewModelContext -> viewModelContext.fragment as? Factory
-                is ActivityViewModelContext -> viewModelContext.activity as? Factory
-            }
-            return factory?.create(state) ?: error("You should let your activity/fragment implements Factory interface")
-        }
-    }
+    companion object : MavericksViewModelFactory<WidgetViewModel, WidgetViewState> by hiltMavericksViewModelFactory()
 
     private val room = session.getRoom(initialState.roomId)
     private val widgetService = session.widgetService()
@@ -101,7 +79,7 @@ class WidgetViewModel @AssistedInject constructor(@Assisted val initialState: Wi
     }
 
     private fun subscribeToWidget() {
-        asyncSubscribe(WidgetViewState::asyncWidget) {
+        onAsync(WidgetViewState::asyncWidget) {
             setState { copy(widgetName = it.name) }
         }
     }
@@ -118,14 +96,13 @@ class WidgetViewModel @AssistedInject constructor(@Assisted val initialState: Wi
         if (room == null) {
             return
         }
-        room.rx().liveStateEvent(EventType.STATE_ROOM_POWER_LEVELS, QueryStringValue.NoCondition)
-                .mapOptional { it.content.toModel<PowerLevelsContent>() }
-                .unwrap()
-                .map {
-                    PowerLevelsHelper(it).isUserAllowedToSend(session.myUserId, true, null)
-                }.subscribe {
-                    setState { copy(canManageWidgets = it) }
-                }.disposeOnClear()
+        room.flow().liveRoomPowerLevels()
+                .map { roomPowerLevels ->
+                    roomPowerLevels.isUserAllowedToSend(session.myUserId, true, null)
+                }
+                .setOnEach {
+                    copy(canManageWidgets = it)
+                }
     }
 
     private fun observeWidgetIfNeeded() {
@@ -133,7 +110,7 @@ class WidgetViewModel @AssistedInject constructor(@Assisted val initialState: Wi
             return
         }
         val widgetId = initialState.widgetId ?: return
-        session.rx()
+        session.flow()
                 .liveRoomWidgets(initialState.roomId, QueryStringValue.Equals(widgetId))
                 .filter { it.isNotEmpty() }
                 .map { it.first() }
@@ -146,14 +123,19 @@ class WidgetViewModel @AssistedInject constructor(@Assisted val initialState: Wi
 
     override fun handle(action: WidgetAction) {
         when (action) {
-            is WidgetAction.OnWebViewLoadingError   -> handleWebViewLoadingError(action)
+            is WidgetAction.OnWebViewLoadingError -> handleWebViewLoadingError(action)
             is WidgetAction.OnWebViewLoadingSuccess -> handleWebViewLoadingSuccess(action)
-            is WidgetAction.OnWebViewStartedToLoad  -> handleWebViewStartLoading()
-            WidgetAction.LoadFormattedUrl           -> loadFormattedUrl(forceFetchToken = false)
-            WidgetAction.DeleteWidget               -> handleDeleteWidget()
-            WidgetAction.RevokeWidget               -> handleRevokeWidget()
-            WidgetAction.OnTermsReviewed            -> loadFormattedUrl(forceFetchToken = false)
+            is WidgetAction.OnWebViewStartedToLoad -> handleWebViewStartLoading()
+            WidgetAction.LoadFormattedUrl -> loadFormattedUrl(forceFetchToken = false)
+            WidgetAction.DeleteWidget -> handleDeleteWidget()
+            WidgetAction.RevokeWidget -> handleRevokeWidget()
+            WidgetAction.OnTermsReviewed -> loadFormattedUrl(forceFetchToken = false)
+            WidgetAction.CloseWidget -> handleCloseWidget()
         }
+    }
+
+    private fun handleCloseWidget() {
+        _viewEvents.post(WidgetViewEvents.Close())
     }
 
     private fun handleRevokeWidget() {

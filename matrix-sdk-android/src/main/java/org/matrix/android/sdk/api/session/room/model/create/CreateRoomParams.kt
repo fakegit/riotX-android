@@ -17,14 +17,17 @@
 package org.matrix.android.sdk.api.session.room.model.create
 
 import android.net.Uri
+import com.squareup.moshi.JsonClass
+import org.matrix.android.sdk.api.crypto.MXCRYPTO_ALGORITHM_MEGOLM
 import org.matrix.android.sdk.api.session.identity.ThreePid
+import org.matrix.android.sdk.api.session.room.model.GuestAccess
 import org.matrix.android.sdk.api.session.room.model.PowerLevelsContent
 import org.matrix.android.sdk.api.session.room.model.RoomDirectoryVisibility
 import org.matrix.android.sdk.api.session.room.model.RoomHistoryVisibility
-import org.matrix.android.sdk.internal.crypto.MXCRYPTO_ALGORITHM_MEGOLM
+import org.matrix.android.sdk.internal.di.MoshiProvider
 
-// TODO Give a way to include other initial states
-class CreateRoomParams {
+@JsonClass(generateAdapter = true)
+open class CreateRoomParams {
     /**
      * A public visibility indicates that the room will be shown in the published room list.
      * A private visibility will hide the room from the published room list.
@@ -61,16 +64,21 @@ class CreateRoomParams {
      * A list of user IDs to invite to the room.
      * This will tell the server to invite everyone in the list to the newly created room.
      */
-    val invitedUserIds = mutableListOf<String>()
+    var invitedUserIds = mutableListOf<String>()
 
     /**
      * A list of objects representing third party IDs to invite into the room.
      */
-    val invite3pids = mutableListOf<ThreePid>()
+    var invite3pids = mutableListOf<ThreePid>()
+
+    /**
+     * Initial Guest Access.
+     */
+    var guestAccess: GuestAccess? = null
 
     /**
      * If set to true, when the room will be created, if cross-signing is enabled and we can get keys for every invited users,
-     * the encryption will be enabled on the created room
+     * the encryption will be enabled on the created room.
      */
     var enableEncryptionIfInvitedUsersSupportIt: Boolean = false
 
@@ -94,7 +102,14 @@ class CreateRoomParams {
      * The server will clobber the following keys: creator.
      * Future versions of the specification may allow the server to clobber other keys.
      */
-    val creationContent = mutableMapOf<String, Any>()
+    var creationContent = mutableMapOf<String, Any>()
+
+    /**
+     * A list of state events to set in the new room. This allows the user to override the default state events
+     * set in the new room. The expected format of the state events are an object with type, state_key and content keys set.
+     * Takes precedence over events set by preset, but gets overridden by name and topic keys.
+     */
+    var initialStates = mutableListOf<CreateRoomStateEvent>()
 
     /**
      * Set to true to disable federation of this room.
@@ -111,8 +126,19 @@ class CreateRoomParams {
             }
         }
 
+    var roomType: String? = null // RoomType.MESSAGING
+        set(value) {
+            field = value
+            if (value != null) {
+                creationContent[CREATION_CONTENT_KEY_ROOM_TYPE] = value
+            } else {
+                // This is the default value, we remove the field
+                creationContent.remove(CREATION_CONTENT_KEY_ROOM_TYPE)
+            }
+        }
+
     /**
-     * The power level content to override in the default power level event
+     * The power level content to override in the default power level event.
      */
     var powerLevelContentOverride: PowerLevelsContent? = null
 
@@ -125,10 +151,10 @@ class CreateRoomParams {
     }
 
     /**
-     * Supported value: MXCRYPTO_ALGORITHM_MEGOLM
+     * Supported value: MXCRYPTO_ALGORITHM_MEGOLM.
      */
     var algorithm: String? = null
-        private set
+        internal set
 
     var historyVisibility: RoomHistoryVisibility? = null
 
@@ -136,7 +162,20 @@ class CreateRoomParams {
         algorithm = MXCRYPTO_ALGORITHM_MEGOLM
     }
 
+    var roomVersion: String? = null
+
+    @Transient var featurePreset: RoomFeaturePreset? = null
+
     companion object {
-        private const val CREATION_CONTENT_KEY_M_FEDERATE = "m.federate"
+        internal const val CREATION_CONTENT_KEY_M_FEDERATE = "m.federate"
+        internal const val CREATION_CONTENT_KEY_ROOM_TYPE = "type"
+
+        fun fromJson(json: String?): CreateRoomParams? {
+            return json?.let { MoshiProvider.providesMoshi().adapter(CreateRoomParams::class.java).fromJson(it) }
+        }
     }
+}
+
+internal fun CreateRoomParams.toJSONString(): String {
+    return MoshiProvider.providesMoshi().adapter(CreateRoomParams::class.java).toJson(this)
 }

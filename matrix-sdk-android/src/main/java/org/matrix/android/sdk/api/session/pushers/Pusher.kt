@@ -24,9 +24,17 @@ data class Pusher(
         val profileTag: String? = null,
         val lang: String?,
         val data: PusherData,
+        val enabled: Boolean,
+        val deviceId: String?,
+        val state: PusherState,
+) {
+    companion object {
 
-        val state: PusherState
-)
+        const val KIND_EMAIL = "email"
+        const val KIND_HTTP = "http"
+        const val APP_ID_EMAIL = "m.email"
+    }
+}
 
 enum class PusherState {
     UNREGISTERED,

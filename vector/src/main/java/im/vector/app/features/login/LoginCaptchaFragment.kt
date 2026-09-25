@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.login
@@ -30,14 +21,15 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.appcompat.app.AlertDialog
 import androidx.core.view.isVisible
 import com.airbnb.mvrx.args
-import im.vector.app.R
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.utils.AssetReader
 import im.vector.app.databinding.FragmentLoginCaptchaBinding
+import im.vector.lib.strings.CommonStrings
 import kotlinx.parcelize.Parcelize
-import org.matrix.android.sdk.internal.di.MoshiProvider
+import org.matrix.android.sdk.api.util.MatrixJsonParser
 import timber.log.Timber
 import java.net.URLDecoder
 import java.util.Formatter
@@ -49,11 +41,13 @@ data class LoginCaptchaFragmentArgument(
 ) : Parcelable
 
 /**
- * In this screen, the user is asked to confirm he is not a robot
+ * In this screen, the user is asked to confirm he is not a robot.
  */
-class LoginCaptchaFragment @Inject constructor(
-        private val assetReader: AssetReader
-) : AbstractLoginFragment<FragmentLoginCaptchaBinding>() {
+@AndroidEntryPoint
+class LoginCaptchaFragment :
+        AbstractLoginFragment<FragmentLoginCaptchaBinding>() {
+
+    @Inject lateinit var assetReader: AssetReader
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): FragmentLoginCaptchaBinding {
         return FragmentLoginCaptchaBinding.inflate(inflater, container, false)
@@ -107,13 +101,13 @@ class LoginCaptchaFragment @Inject constructor(
                     return
                 }
 
-                AlertDialog.Builder(requireActivity())
-                        .setMessage(R.string.ssl_could_not_verify)
-                        .setPositiveButton(R.string.ssl_trust) { _, _ ->
+                MaterialAlertDialogBuilder(requireActivity())
+                        .setMessage(CommonStrings.ssl_could_not_verify)
+                        .setPositiveButton(CommonStrings.ssl_trust) { _, _ ->
                             Timber.d("## onReceivedSslError() : the user trusted")
                             handler.proceed()
                         }
-                        .setNegativeButton(R.string.ssl_do_not_trust) { _, _ ->
+                        .setNegativeButton(CommonStrings.ssl_do_not_trust) { _, _ ->
                             Timber.d("## onReceivedSslError() : the user did not trust")
                             handler.cancel()
                         }
@@ -141,7 +135,6 @@ class LoginCaptchaFragment @Inject constructor(
                 // runOnUiThread(Runnable { finish() })
             }
 
-            @SuppressLint("NewApi")
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
                 super.onReceivedHttpError(view, request, errorResponse)
 
@@ -157,12 +150,14 @@ class LoginCaptchaFragment @Inject constructor(
                 }
             }
 
+            @Deprecated("Deprecated in Java")
             override fun onReceivedError(view: WebView, errorCode: Int, description: String, failingUrl: String) {
                 @Suppress("DEPRECATION")
                 super.onReceivedError(view, errorCode, description, failingUrl)
                 onError(description)
             }
 
+            @Deprecated("Deprecated in Java")
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 if (url?.startsWith("js:") == true) {
                     var json = url.substring(3)
@@ -171,7 +166,7 @@ class LoginCaptchaFragment @Inject constructor(
                     try {
                         // URL decode
                         json = URLDecoder.decode(json, "UTF-8")
-                        javascriptResponse = MoshiProvider.providesMoshi().adapter(JavascriptResponse::class.java).fromJson(json)
+                        javascriptResponse = MatrixJsonParser.getMoshi().adapter(JavascriptResponse::class.java).fromJson(json)
                     } catch (e: Exception) {
                         Timber.e(e, "## shouldOverrideUrlLoading(): failed")
                     }

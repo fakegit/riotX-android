@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.core.services
@@ -23,8 +14,14 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import androidx.core.content.ContextCompat
+import im.vector.lib.core.utils.compat.getParcelableExtraCompat
 import java.lang.ref.WeakReference
 
+/**
+ * It's only used in API 21 and 22 so we will not have security exception on these OS,
+ * so it's safe to use @Suppress("MissingPermission").
+ */
 class BluetoothHeadsetReceiver : BroadcastReceiver() {
 
     interface EventListener {
@@ -37,9 +34,10 @@ class BluetoothHeadsetReceiver : BroadcastReceiver() {
             val plugged: Boolean,
             val headsetName: String?,
             /**
-             * BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE
-             * BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO
-             * AUDIO_VIDEO_WEARABLE_HEADSET
+             * Can be:
+             * - BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE
+             * - BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO
+             * - AUDIO_VIDEO_WEARABLE_HEADSET.
              */
             val deviceClass: Int
     )
@@ -53,18 +51,21 @@ class BluetoothHeadsetReceiver : BroadcastReceiver() {
         // STATE_DISCONNECTED}, STATE_CONNECTING, STATE_CONNECTED, STATE_DISCONNECTING
 
         val headsetConnected = when (intent?.getIntExtra(BluetoothAdapter.EXTRA_CONNECTION_STATE, -1)) {
-            BluetoothAdapter.STATE_CONNECTED    -> true
+            BluetoothAdapter.STATE_CONNECTED -> true
             BluetoothAdapter.STATE_DISCONNECTED -> false
-            else                                -> return // ignore intermediate states
+            else -> return // ignore intermediate states
         }
 
-        val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+        val device = intent.getParcelableExtraCompat<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+        @Suppress("MissingPermission")
         val deviceName = device?.name
+        @Suppress("MissingPermission")
         when (device?.bluetoothClass?.deviceClass) {
             BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE,
             BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO,
             BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET -> {
                 // filter only device that we care about for
+                @Suppress("MissingPermission")
                 delegate?.get()?.onBTHeadsetEvent(
                         BTHeadsetPlugEvent(
                                 plugged = headsetConnected,
@@ -73,7 +74,7 @@ class BluetoothHeadsetReceiver : BroadcastReceiver() {
                         )
                 )
             }
-            else                                               -> return
+            else -> return
         }
     }
 
@@ -81,7 +82,12 @@ class BluetoothHeadsetReceiver : BroadcastReceiver() {
         fun createAndRegister(context: Context, listener: EventListener): BluetoothHeadsetReceiver {
             val receiver = BluetoothHeadsetReceiver()
             receiver.delegate = WeakReference(listener)
-            context.registerReceiver(receiver, IntentFilter(BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED))
+            ContextCompat.registerReceiver(
+                    context,
+                    receiver,
+                    IntentFilter(BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED),
+                    ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
             return receiver
         }
 

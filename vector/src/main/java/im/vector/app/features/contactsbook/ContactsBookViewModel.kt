@@ -1,36 +1,26 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.contactsbook
 
-import androidx.lifecycle.viewModelScope
-import com.airbnb.mvrx.ActivityViewModelContext
-import com.airbnb.mvrx.FragmentViewModelContext
 import com.airbnb.mvrx.Loading
-import com.airbnb.mvrx.MvRxViewModelFactory
+import com.airbnb.mvrx.MavericksViewModelFactory
 import com.airbnb.mvrx.Success
-import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import im.vector.app.core.contacts.ContactsDataSource
 import im.vector.app.core.contacts.MappedContact
-import im.vector.app.core.extensions.exhaustive
-import im.vector.app.core.platform.EmptyViewEvents
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
 import im.vector.app.core.platform.VectorViewModel
+import im.vector.app.core.resources.StringProvider
+import im.vector.app.features.discovery.fetchIdentityServerWithTerms
+import im.vector.lib.strings.CommonStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.session.Session
@@ -38,27 +28,19 @@ import org.matrix.android.sdk.api.session.identity.IdentityServiceError
 import org.matrix.android.sdk.api.session.identity.ThreePid
 import timber.log.Timber
 
-class ContactsBookViewModel @AssistedInject constructor(@Assisted
-                                                        initialState: ContactsBookViewState,
-                                                        private val contactsDataSource: ContactsDataSource,
-                                                        private val session: Session)
-    : VectorViewModel<ContactsBookViewState, ContactsBookAction, EmptyViewEvents>(initialState) {
+class ContactsBookViewModel @AssistedInject constructor(
+        @Assisted initialState: ContactsBookViewState,
+        private val contactsDataSource: ContactsDataSource,
+        private val stringProvider: StringProvider,
+        private val session: Session
+) : VectorViewModel<ContactsBookViewState, ContactsBookAction, ContactsBookViewEvents>(initialState) {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: ContactsBookViewState): ContactsBookViewModel
+    interface Factory : MavericksAssistedViewModelFactory<ContactsBookViewModel, ContactsBookViewState> {
+        override fun create(initialState: ContactsBookViewState): ContactsBookViewModel
     }
 
-    companion object : MvRxViewModelFactory<ContactsBookViewModel, ContactsBookViewState> {
-
-        override fun create(viewModelContext: ViewModelContext, state: ContactsBookViewState): ContactsBookViewModel? {
-            val factory = when (viewModelContext) {
-                is FragmentViewModelContext -> viewModelContext.fragment as? Factory
-                is ActivityViewModelContext -> viewModelContext.activity as? Factory
-            }
-            return factory?.create(state) ?: error("You should let your activity/fragment implements Factory interface")
-        }
-    }
+    companion object : MavericksViewModelFactory<ContactsBookViewModel, ContactsBookViewState> by hiltMavericksViewModelFactory()
 
     private var allContacts: List<MappedContact> = emptyList()
     private var mappedContacts: List<MappedContact> = emptyList()
@@ -66,7 +48,7 @@ class ContactsBookViewModel @AssistedInject constructor(@Assisted
     init {
         loadContacts()
 
-        selectSubscribe(ContactsBookViewState::searchTerm, ContactsBookViewState::onlyBoundContacts) { _, _ ->
+        onEach(ContactsBookViewState::searchTerm, ContactsBookViewState::onlyBoundContacts) { _, _ ->
             updateFilteredMappedContacts()
         }
     }
@@ -156,8 +138,8 @@ class ContactsBookViewModel @AssistedInject constructor(@Assisted
         val filteredMappedContacts = mappedContacts
                 .filter { it.displayName.contains(state.searchTerm, true) }
                 .filter { contactModel ->
-                    !state.onlyBoundContacts
-                            || contactModel.emails.any { it.matrixId != null } || contactModel.msisdns.any { it.matrixId != null }
+                    !state.onlyBoundContacts ||
+                            contactModel.emails.any { it.matrixId != null } || contactModel.msisdns.any { it.matrixId != null }
                 }
 
         setState {
@@ -169,10 +151,23 @@ class ContactsBookViewModel @AssistedInject constructor(@Assisted
 
     override fun handle(action: ContactsBookAction) {
         when (action) {
-            is ContactsBookAction.FilterWith        -> handleFilterWith(action)
+            is ContactsBookAction.FilterWith -> handleFilterWith(action)
             is ContactsBookAction.OnlyBoundContacts -> handleOnlyBoundContacts(action)
-            ContactsBookAction.UserConsentGranted   -> handleUserConsentGranted()
-        }.exhaustive
+            ContactsBookAction.UserConsentGranted -> handleUserConsentGranted()
+            ContactsBookAction.UserConsentRequest -> handleUserConsentRequest()
+        }
+    }
+
+    private fun handleUserConsentRequest() {
+        viewModelScope.launch {
+            val event = try {
+                val result = session.fetchIdentityServerWithTerms(stringProvider.getString(CommonStrings.resources_language))
+                ContactsBookViewEvents.OnPoliciesRetrieved(result)
+            } catch (throwable: Throwable) {
+                ContactsBookViewEvents.Failure(throwable)
+            }
+            _viewEvents.post(event)
+        }
     }
 
     private fun handleUserConsentGranted() {

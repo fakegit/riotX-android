@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.core.ui.views
@@ -21,15 +12,16 @@ import android.graphics.Color
 import android.text.method.LinkMovementMethod
 import android.util.AttributeSet
 import android.view.View
-import android.widget.RelativeLayout
+import android.widget.LinearLayout
 import androidx.core.content.ContextCompat
 import androidx.core.text.italic
 import im.vector.app.R
+import im.vector.app.core.epoxy.onClick
 import im.vector.app.core.error.ResourceLimitErrorFormatter
 import im.vector.app.core.utils.DimensionConverter
 import im.vector.app.databinding.ViewNotificationAreaBinding
 import im.vector.app.features.themes.ThemeUtils
-
+import im.vector.lib.strings.CommonStrings
 import me.gujun.android.span.span
 import me.saket.bettermovementmethod.BetterLinkMovementMethod
 import org.matrix.android.sdk.api.failure.MatrixError
@@ -37,26 +29,26 @@ import org.matrix.android.sdk.api.session.events.model.Event
 import timber.log.Timber
 
 /**
- * The view used to show some information about the room
- * It does have a unique render method
+ * The view used to show some information about the room.
+ * It does have a unique render method.
  */
 class NotificationAreaView @JvmOverloads constructor(
         context: Context,
         attrs: AttributeSet? = null,
         defStyleAttr: Int = 0
-) : RelativeLayout(context, attrs, defStyleAttr) {
+) : LinearLayout(context, attrs, defStyleAttr) {
 
     var delegate: Delegate? = null
     private var state: State = State.Initial
 
-    private lateinit var views : ViewNotificationAreaBinding
+    private lateinit var views: ViewNotificationAreaBinding
 
     init {
         setupView()
     }
 
     /**
-     * This methods is responsible for rendering the view according to the newState
+     * This methods is responsible for rendering the view according to the newState.
      *
      * @param newState the newState representing the view
      */
@@ -69,10 +61,12 @@ class NotificationAreaView @JvmOverloads constructor(
         cleanUp()
         state = newState
         when (newState) {
-            is State.Default                    -> renderDefault()
-            is State.Hidden                     -> renderHidden()
-            is State.NoPermissionToPost         -> renderNoPermissionToPost()
-            is State.Tombstone                  -> renderTombstone(newState)
+            State.Initial -> Unit
+            is State.Default -> renderDefault()
+            is State.Hidden -> renderHidden()
+            is State.NoPermissionToPost -> renderNoPermissionToPost()
+            is State.UnsupportedAlgorithm -> renderUnsupportedAlgorithm(newState)
+            is State.Tombstone -> renderTombstone()
             is State.ResourceLimitExceededError -> renderResourceLimitExceededError(newState)
         }
     }
@@ -98,11 +92,29 @@ class NotificationAreaView @JvmOverloads constructor(
         views.roomNotificationIcon.setImageDrawable(null)
         val message = span {
             italic {
-                +resources.getString(R.string.room_do_not_have_permission_to_post)
+                +resources.getString(CommonStrings.room_do_not_have_permission_to_post)
             }
         }
         views.roomNotificationMessage.text = message
-        views.roomNotificationMessage.setTextColor(ThemeUtils.getColor(context, R.attr.riotx_text_secondary))
+        views.roomNotificationMessage.setTextColor(ThemeUtils.getColor(context, im.vector.lib.ui.styles.R.attr.vctr_content_secondary))
+    }
+
+    private fun renderUnsupportedAlgorithm(e2eState: State.UnsupportedAlgorithm) {
+        visibility = View.VISIBLE
+        views.roomNotificationIcon.setImageResource(R.drawable.ic_warning_badge)
+        val text = if (e2eState.canRestore) {
+            CommonStrings.room_unsupported_e2e_algorithm_as_admin
+        } else CommonStrings.room_unsupported_e2e_algorithm
+        val message = span {
+            italic {
+                +resources.getString(text)
+            }
+        }
+        views.roomNotificationMessage.onClick {
+            delegate?.onMisconfiguredEncryptionClicked()
+        }
+        views.roomNotificationMessage.text = message
+        views.roomNotificationMessage.setTextColor(ThemeUtils.getColor(context, im.vector.lib.ui.styles.R.attr.vctr_content_secondary))
     }
 
     private fun renderResourceLimitExceededError(state: State.ResourceLimitExceededError) {
@@ -111,10 +123,10 @@ class NotificationAreaView @JvmOverloads constructor(
         val formatterMode: ResourceLimitErrorFormatter.Mode
         val backgroundColor: Int
         if (state.isSoft) {
-            backgroundColor = R.color.soft_resource_limit_exceeded
+            backgroundColor = im.vector.lib.ui.styles.R.color.soft_resource_limit_exceeded
             formatterMode = ResourceLimitErrorFormatter.Mode.Soft
         } else {
-            backgroundColor = R.color.hard_resource_limit_exceeded
+            backgroundColor = im.vector.lib.ui.styles.R.color.hard_resource_limit_exceeded
             formatterMode = ResourceLimitErrorFormatter.Mode.Hard
         }
         val message = resourceLimitErrorFormatter.format(state.matrixError, formatterMode, clickable = true)
@@ -125,15 +137,15 @@ class NotificationAreaView @JvmOverloads constructor(
         setBackgroundColor(ContextCompat.getColor(context, backgroundColor))
     }
 
-    private fun renderTombstone(state: State.Tombstone) {
+    private fun renderTombstone() {
         visibility = View.VISIBLE
-        views.roomNotificationIcon.setImageResource(R.drawable.error)
+        views.roomNotificationIcon.setImageResource(R.drawable.ic_warning_badge)
         val message = span {
-            +resources.getString(R.string.room_tombstone_versioned_description)
+            +resources.getString(CommonStrings.room_tombstone_versioned_description)
             +"\n"
-            span(resources.getString(R.string.room_tombstone_continuation_link)) {
+            span(resources.getString(CommonStrings.room_tombstone_continuation_link)) {
                 textDecorationLine = "underline"
-                onClick = { delegate?.onTombstoneEventClicked(state.tombstoneEvent) }
+                onClick = { delegate?.onTombstoneEventClicked() }
             }
         }
         views.roomNotificationMessage.movementMethod = BetterLinkMovementMethod.getInstance()
@@ -149,8 +161,8 @@ class NotificationAreaView @JvmOverloads constructor(
     }
 
     /**
-     * The state representing the view
-     * It can take one state at a time
+     * The state representing the view.
+     * It can take one state at a time.
      */
     sealed class State {
 
@@ -162,6 +174,7 @@ class NotificationAreaView @JvmOverloads constructor(
 
         // User can't post messages to room because his power level doesn't allow it.
         object NoPermissionToPost : State()
+        data class UnsupportedAlgorithm(val canRestore: Boolean) : State()
 
         // View will be Gone
         object Hidden : State()
@@ -174,9 +187,10 @@ class NotificationAreaView @JvmOverloads constructor(
     }
 
     /**
-     * An interface to delegate some actions to another object
+     * An interface to delegate some actions to another object.
      */
     interface Delegate {
-        fun onTombstoneEventClicked(tombstoneEvent: Event)
+        fun onTombstoneEventClicked()
+        fun onMisconfiguredEncryptionClicked()
     }
 }

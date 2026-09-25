@@ -16,23 +16,22 @@
 
 package org.matrix.android.sdk.api.session.crypto
 
-import org.matrix.android.sdk.internal.crypto.model.CryptoDeviceInfo
-import org.matrix.android.sdk.internal.crypto.model.MXUsersDevicesMap
-import org.matrix.olm.OlmException
+import org.matrix.android.sdk.api.session.crypto.model.CryptoDeviceInfo
+import org.matrix.android.sdk.api.session.crypto.model.MXUsersDevicesMap
 
 /**
  * Represents a crypto error response.
  */
 sealed class MXCryptoError : Throwable() {
 
-    data class Base(val errorType: ErrorType,
-                    val technicalMessage: String,
-                    /**
-                     * Describe the error with more details
-                     */
-                    val detailedErrorDescription: String? = null) : MXCryptoError()
-
-    data class OlmError(val olmException: OlmException) : MXCryptoError()
+    data class Base(
+            val errorType: ErrorType,
+            val technicalMessage: String,
+            /**
+             * Describe the error with more details.
+             */
+            val detailedErrorDescription: String? = null
+    ) : MXCryptoError()
 
     data class UnknownDevice(val deviceList: MXUsersDevicesMap<CryptoDeviceInfo>) : MXCryptoError()
 
@@ -63,7 +62,7 @@ sealed class MXCryptoError : Throwable() {
 
     companion object {
         /**
-         * Resource for technicalMessage
+         * Resource for technicalMessage.
          */
         const val UNABLE_TO_ENCRYPT_REASON = "Unable to encrypt %s"
         const val UNABLE_TO_DECRYPT_REASON = "Unable to decrypt %1\$s. Algorithm: %2\$s"

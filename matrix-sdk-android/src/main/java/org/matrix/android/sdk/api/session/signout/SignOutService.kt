@@ -30,13 +30,14 @@ interface SignOutService {
     suspend fun signInAgain(password: String)
 
     /**
-     * Update the session with credentials received after SSO
+     * Update the session with credentials received after SSO.
      */
     suspend fun updateCredentials(credentials: Credentials)
 
     /**
-     * Sign out, and release the session, clear all the session data, including crypto data
+     * Sign out, and release the session, clear all the session data, including crypto data.
      * @param signOutFromHomeserver true if the sign out request has to be done
+     * @param ignoreServerRequestError true to ignore server error if any
      */
-    suspend fun signOut(signOutFromHomeserver: Boolean)
+    suspend fun signOut(signOutFromHomeserver: Boolean, ignoreServerRequestError: Boolean = false)
 }

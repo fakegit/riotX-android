@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.core.epoxy.profiles
@@ -19,7 +10,6 @@ package im.vector.app.core.epoxy.profiles
 import android.content.res.ColorStateList
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.core.widget.ImageViewCompat
 import com.airbnb.epoxy.EpoxyAttribute
@@ -34,8 +24,8 @@ import im.vector.app.features.home.AvatarRenderer
 import im.vector.app.features.themes.ThemeUtils
 import org.matrix.android.sdk.api.util.MatrixItem
 
-@EpoxyModelClass(layout = R.layout.item_profile_action)
-abstract class ProfileActionItem : VectorEpoxyModel<ProfileActionItem.Holder>() {
+@EpoxyModelClass
+abstract class ProfileActionItem : VectorEpoxyModel<ProfileActionItem.Holder>(R.layout.item_profile_action) {
 
     @EpoxyAttribute
     lateinit var title: String
@@ -67,7 +57,7 @@ abstract class ProfileActionItem : VectorEpoxyModel<ProfileActionItem.Holder>() 
     @EpoxyAttribute
     var destructive: Boolean = false
 
-    @EpoxyAttribute
+    @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
     var listener: ClickListener? = null
 
     override fun bind(holder: Holder) {
@@ -78,14 +68,14 @@ abstract class ProfileActionItem : VectorEpoxyModel<ProfileActionItem.Holder>() 
         }
         holder.title.text = title
         val titleTintColor = if (destructive) {
-            ContextCompat.getColor(holder.view.context, R.color.riotx_notice)
+            ThemeUtils.getColor(holder.view.context, com.google.android.material.R.attr.colorError)
         } else {
-            ThemeUtils.getColor(holder.view.context, R.attr.riotx_text_primary)
+            ThemeUtils.getColor(holder.view.context, im.vector.lib.ui.styles.R.attr.vctr_content_primary)
         }
         val iconTintColor = if (destructive) {
-            ContextCompat.getColor(holder.view.context, R.color.riotx_notice)
+            ThemeUtils.getColor(holder.view.context, com.google.android.material.R.attr.colorError)
         } else {
-            ThemeUtils.getColor(holder.view.context, R.attr.riotx_text_secondary)
+            ThemeUtils.getColor(holder.view.context, im.vector.lib.ui.styles.R.attr.vctr_content_secondary)
         }
         holder.title.setTextColor(titleTintColor)
         holder.subtitle.setTextOrHide(subtitle)
@@ -119,7 +109,7 @@ abstract class ProfileActionItem : VectorEpoxyModel<ProfileActionItem.Holder>() 
             val tintColorSecondary = if (destructive) {
                 titleTintColor
             } else {
-                ThemeUtils.getColor(holder.view.context, R.attr.riotx_text_secondary)
+                ThemeUtils.getColor(holder.view.context, im.vector.lib.ui.styles.R.attr.vctr_content_secondary)
             }
             holder.editable.setImageResource(editableRes)
             ImageViewCompat.setImageTintList(holder.editable, ColorStateList.valueOf(tintColorSecondary))

@@ -1,17 +1,8 @@
 /*
- * Copyright 2018 New Vector Ltd
+ * Copyright 2018-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.webview
@@ -29,10 +20,12 @@ private const val RIOT_BOT_ID = "@riot-bot:matrix.org"
  * This class is the Consent implementation of WebViewEventListener.
  * It is used to manage the consent agreement flow.
  */
-class ConsentWebViewEventListener(activity: VectorBaseActivity<*>,
-                                  private val session: Session,
-                                  private val delegate: WebViewEventListener)
-    : WebViewEventListener by delegate {
+class ConsentWebViewEventListener(
+        activity: VectorBaseActivity<*>,
+        private val session: Session,
+        private val delegate: WebViewEventListener
+) :
+        WebViewEventListener by delegate {
 
     private val safeActivity: VectorBaseActivity<*>? by weak(activity)
 
@@ -44,11 +37,11 @@ class ConsentWebViewEventListener(activity: VectorBaseActivity<*>,
     }
 
     /**
-     * This methods try to create the RiotBot room when the user gives his agreement
+     * This methods try to create the RiotBot room when the user gives his agreement.
      */
     private fun createRiotBotRoomIfNeeded() {
         safeActivity?.let {
-            /* We do not create a Room with RiotBot in RiotX for the moment
+            /* We do not create a Room with RiotBot in Element for the moment
             val joinedRooms = session.dataHandler.store.rooms.filter {
                 it.isJoined
             }
@@ -58,7 +51,7 @@ class ConsentWebViewEventListener(activity: VectorBaseActivity<*>,
                 session.profileApiClient
                         .displayname(RIOT_BOT_ID, object : MatrixCallback<String>(createRiotBotRoomCallback) {
                             override fun onSuccess(info: String?) {
-                                // Ok, the Home Server knows riot-Bot, so create a Room with him
+                                // Ok, the homeserver knows riot-Bot, so create a Room with him
                                 session.createDirectMessageRoom(RIOT_BOT_ID, createRiotBotRoomCallback)
                             }
                         })
@@ -72,7 +65,7 @@ class ConsentWebViewEventListener(activity: VectorBaseActivity<*>,
     }
 
     /**
-     * APICallback instance
+     * APICallback instance.
      */
     private val createRiotBotRoomCallback = object : MatrixCallback<String> {
         override fun onSuccess(data: String) {

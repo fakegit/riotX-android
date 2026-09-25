@@ -1,74 +1,52 @@
 /*
- * Copyright 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roommemberprofile
 
 import android.content.Context
 import android.content.Intent
+import android.view.View
 import android.widget.Toast
-import androidx.appcompat.widget.Toolbar
-import com.airbnb.mvrx.MvRx
+import com.airbnb.mvrx.Mavericks
 import com.airbnb.mvrx.viewModel
-import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.extensions.addFragment
-import im.vector.app.core.platform.ToolbarConfigurable
 import im.vector.app.core.platform.VectorBaseActivity
 import im.vector.app.databinding.ActivitySimpleBinding
 import im.vector.app.features.room.RequireActiveMembershipViewEvents
 import im.vector.app.features.room.RequireActiveMembershipViewModel
-import im.vector.app.features.room.RequireActiveMembershipViewState
-import javax.inject.Inject
+import im.vector.lib.core.utils.compat.getParcelableCompat
 
-class RoomMemberProfileActivity :
-        VectorBaseActivity<ActivitySimpleBinding>(),
-        ToolbarConfigurable,
-        RequireActiveMembershipViewModel.Factory {
+@AndroidEntryPoint
+class RoomMemberProfileActivity : VectorBaseActivity<ActivitySimpleBinding>() {
 
     companion object {
         fun newIntent(context: Context, args: RoomMemberProfileArgs): Intent {
             return Intent(context, RoomMemberProfileActivity::class.java).apply {
-                putExtra(MvRx.KEY_ARG, args)
+                putExtra(Mavericks.KEY_ARG, args)
             }
         }
     }
 
     private val requireActiveMembershipViewModel: RequireActiveMembershipViewModel by viewModel()
 
-    @Inject
-    lateinit var requireActiveMembershipViewModelFactory: RequireActiveMembershipViewModel.Factory
-
-    override fun create(initialState: RequireActiveMembershipViewState): RequireActiveMembershipViewModel {
-        return requireActiveMembershipViewModelFactory.create(initialState)
-    }
-
-    override fun injectWith(injector: ScreenComponent) {
-        super.injectWith(injector)
-        injector.inject(this)
-    }
-
     override fun getBinding(): ActivitySimpleBinding {
         return ActivitySimpleBinding.inflate(layoutInflater)
     }
 
+    override fun getCoordinatorLayout() = views.coordinatorLayout
+
+    override val rootView: View
+        get() = views.coordinatorLayout
+
     override fun initUiAndData() {
         if (isFirstCreation()) {
-            val fragmentArgs: RoomMemberProfileArgs = intent?.extras?.getParcelable(MvRx.KEY_ARG) ?: return
-            addFragment(R.id.simpleFragmentContainer, RoomMemberProfileFragment::class.java, fragmentArgs)
+            val fragmentArgs: RoomMemberProfileArgs = intent?.extras?.getParcelableCompat(Mavericks.KEY_ARG) ?: return
+            addFragment(views.simpleFragmentContainer, RoomMemberProfileFragment::class.java, fragmentArgs)
         }
 
         requireActiveMembershipViewModel.observeViewEvents {
@@ -76,10 +54,6 @@ class RoomMemberProfileActivity :
                 is RequireActiveMembershipViewEvents.RoomLeft -> handleRoomLeft(it)
             }
         }
-    }
-
-    override fun configure(toolbar: Toolbar) {
-        configureToolbar(toolbar)
     }
 
     private fun handleRoomLeft(roomLeft: RequireActiveMembershipViewEvents.RoomLeft) {

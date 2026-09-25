@@ -17,27 +17,28 @@
 package org.matrix.android.sdk.internal.session.call
 
 import org.matrix.android.sdk.api.MatrixConfiguration
+import org.matrix.android.sdk.api.session.call.CallIdGenerator
 import org.matrix.android.sdk.api.session.call.MxCall
 import org.matrix.android.sdk.api.session.room.model.call.CallCapabilities
 import org.matrix.android.sdk.api.session.room.model.call.CallInviteContent
-import org.matrix.android.sdk.api.util.Optional
+import org.matrix.android.sdk.api.session.room.model.call.CallSignalingContent
 import org.matrix.android.sdk.internal.di.DeviceId
 import org.matrix.android.sdk.internal.di.UserId
 import org.matrix.android.sdk.internal.session.call.model.MxCallImpl
 import org.matrix.android.sdk.internal.session.profile.GetProfileInfoTask
 import org.matrix.android.sdk.internal.session.room.send.LocalEchoEventFactory
 import org.matrix.android.sdk.internal.session.room.send.queue.EventSenderProcessor
-import java.math.BigDecimal
-import java.util.UUID
+import org.matrix.android.sdk.internal.util.time.Clock
 import javax.inject.Inject
 
 internal class MxCallFactory @Inject constructor(
-        @DeviceId private val deviceId: String?,
+        @DeviceId private val deviceId: String,
         private val localEchoEventFactory: LocalEchoEventFactory,
         private val eventSenderProcessor: EventSenderProcessor,
         private val matrixConfiguration: MatrixConfiguration,
         private val getProfileInfoTask: GetProfileInfoTask,
-        @UserId private val userId: String
+        @UserId private val userId: String,
+        private val clock: Clock,
 ) {
 
     fun createIncomingCall(roomId: String, opponentUserId: String, content: CallInviteContent): MxCall? {
@@ -47,33 +48,43 @@ internal class MxCallFactory @Inject constructor(
                 isOutgoing = false,
                 roomId = roomId,
                 userId = userId,
-                ourPartyId = deviceId ?: "",
-                opponentUserId = opponentUserId,
+                ourPartyId = deviceId,
                 isVideoCall = content.isVideo(),
                 localEchoEventFactory = localEchoEventFactory,
                 eventSenderProcessor = eventSenderProcessor,
                 matrixConfiguration = matrixConfiguration,
-                getProfileInfoTask = getProfileInfoTask
+                getProfileInfoTask = getProfileInfoTask,
+                clock = clock,
         ).apply {
-            opponentPartyId = Optional.from(content.partyId)
-            opponentVersion = content.version?.let { BigDecimal(it).intValueExact() } ?: MxCall.VOIP_PROTO_VERSION
-            capabilities = content.capabilities ?: CallCapabilities()
+            updateOpponentData(opponentUserId, content, content.capabilities)
         }
     }
 
     fun createOutgoingCall(roomId: String, opponentUserId: String, isVideoCall: Boolean): MxCall {
         return MxCallImpl(
-                callId = UUID.randomUUID().toString(),
+                callId = CallIdGenerator.generate(),
                 isOutgoing = true,
                 roomId = roomId,
                 userId = userId,
-                ourPartyId = deviceId ?: "",
-                opponentUserId = opponentUserId,
+                ourPartyId = deviceId,
                 isVideoCall = isVideoCall,
                 localEchoEventFactory = localEchoEventFactory,
                 eventSenderProcessor = eventSenderProcessor,
                 matrixConfiguration = matrixConfiguration,
-                getProfileInfoTask = getProfileInfoTask
-        )
+                getProfileInfoTask = getProfileInfoTask,
+                clock = clock,
+        ).apply {
+            // Setup with this userId, might be updated when processing the Answer event
+            this.opponentUserId = opponentUserId
+        }
+    }
+
+    fun updateOutgoingCallWithOpponentData(
+            call: MxCall,
+            userId: String,
+            content: CallSignalingContent,
+            callCapabilities: CallCapabilities?
+    ) {
+        (call as? MxCallImpl)?.updateOpponentData(userId, content, callCapabilities)
     }
 }

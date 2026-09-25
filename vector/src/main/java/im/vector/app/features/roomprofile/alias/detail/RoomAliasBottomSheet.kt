@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.roomprofile.alias.detail
@@ -24,7 +15,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.airbnb.mvrx.fragmentViewModel
 import com.airbnb.mvrx.withState
-import im.vector.app.core.di.ScreenComponent
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.core.extensions.cleanup
 import im.vector.app.core.extensions.configureWith
 import im.vector.app.core.platform.VectorBaseBottomSheetDialogFragment
@@ -42,24 +33,20 @@ data class RoomAliasBottomSheetArgs(
 ) : Parcelable
 
 /**
- * Bottom sheet fragment that shows room alias information with list of contextual actions
+ * Bottom sheet fragment that shows room alias information with list of contextual actions.
  */
+@AndroidEntryPoint
 class RoomAliasBottomSheet :
         VectorBaseBottomSheetDialogFragment<BottomSheetGenericListBinding>(),
         RoomAliasBottomSheetController.Listener {
 
     private lateinit var sharedActionViewModel: RoomAliasBottomSheetSharedActionViewModel
     @Inject lateinit var sharedViewPool: RecyclerView.RecycledViewPool
-    @Inject lateinit var roomAliasBottomSheetViewModelFactory: RoomAliasBottomSheetViewModel.Factory
     @Inject lateinit var controller: RoomAliasBottomSheetController
 
     private val viewModel: RoomAliasBottomSheetViewModel by fragmentViewModel(RoomAliasBottomSheetViewModel::class)
 
     override val showExpanded = true
-
-    override fun injectWith(injector: ScreenComponent) {
-        injector.inject(this)
-    }
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): BottomSheetGenericListBinding {
         return BottomSheetGenericListBinding.inflate(inflater, container, false)
@@ -90,19 +77,23 @@ class RoomAliasBottomSheet :
     }
 
     companion object {
-        fun newInstance(alias: String,
-                        isPublished: Boolean,
-                        isMainAlias: Boolean,
-                        isLocal: Boolean,
-                        canEditCanonicalAlias: Boolean): RoomAliasBottomSheet {
+        fun newInstance(
+                alias: String,
+                isPublished: Boolean,
+                isMainAlias: Boolean,
+                isLocal: Boolean,
+                canEditCanonicalAlias: Boolean
+        ): RoomAliasBottomSheet {
             return RoomAliasBottomSheet().apply {
-                setArguments(RoomAliasBottomSheetArgs(
-                        alias = alias,
-                        isPublished = isPublished,
-                        isMainAlias = isMainAlias,
-                        isLocal = isLocal,
-                        canEditCanonicalAlias = canEditCanonicalAlias
-                ))
+                setArguments(
+                        RoomAliasBottomSheetArgs(
+                                alias = alias,
+                                isPublished = isPublished,
+                                isMainAlias = isMainAlias,
+                                isLocal = isLocal,
+                                canEditCanonicalAlias = canEditCanonicalAlias
+                        )
+                )
             }
         }
     }

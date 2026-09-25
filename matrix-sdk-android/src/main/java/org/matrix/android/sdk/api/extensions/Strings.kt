@@ -16,14 +16,29 @@
 
 package org.matrix.android.sdk.api.extensions
 
+import java.util.regex.Pattern
+
+const val emailPattern = "^[a-zA-Z0-9_!#\$%&'*+/=?`{|}~^-]+(?:\\.[a-zA-Z0-9_!#\$%&'*+/=?`{|}~^-]+)*@[a-zA-Z0-9-]+(?:\\.[a-zA-Z0-9-]+)*\$"
+val emailAddress: Pattern = Pattern.compile(emailPattern)
+
 fun CharSequence.ensurePrefix(prefix: CharSequence): CharSequence {
     return when {
         startsWith(prefix) -> this
-        else               -> "$prefix$this"
+        else -> "$prefix$this"
     }
 }
 
 /**
- * Append a new line and then the provided string
+ * Check if a CharSequence is an email.
+ */
+fun CharSequence.isEmail() = emailAddress.matcher(this).matches()
+
+/**
+ * Append a new line and then the provided string.
  */
 fun StringBuilder.appendNl(str: String) = append("\n").append(str)
+
+/**
+ * Returns null if the string is empty.
+ */
+fun String.ensureNotEmpty() = ifEmpty { null }

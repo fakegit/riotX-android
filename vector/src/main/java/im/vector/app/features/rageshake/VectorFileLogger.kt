@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.rageshake
@@ -19,6 +10,7 @@ package im.vector.app.features.rageshake
 import android.content.Context
 import android.util.Log
 import im.vector.app.features.settings.VectorPreferences
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -73,7 +65,7 @@ class VectorFileLogger @Inject constructor(
         }
 
         for (i in 0..15) {
-            val file = File(cacheDirectory, "elementLogs.$i.txt")
+            val file = File(cacheDirectory, "elementLogs.${i}.txt")
             tryOrNull { file.delete() }
         }
 
@@ -88,6 +80,7 @@ class VectorFileLogger @Inject constructor(
         }
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
     override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
         fileHandler ?: return
         GlobalScope.launch(Dispatchers.IO) {
@@ -119,7 +112,7 @@ class VectorFileLogger @Inject constructor(
                     ?.flush()
                     ?.let { 0 until logRotationCount }
                     ?.mapNotNull { index ->
-                        File(cacheDirectory, "$fileNamePrefix.$index.txt")
+                        File(cacheDirectory, "$fileNamePrefix.${index}.txt")
                                 .takeIf { it.exists() }
                     }
         }
@@ -127,7 +120,7 @@ class VectorFileLogger @Inject constructor(
     }
 
     /**
-     * Log an Throwable
+     * Log an Throwable.
      *
      * @param throwable the throwable to log
      */
@@ -142,6 +135,7 @@ class VectorFileLogger @Inject constructor(
 
     private fun logToFile(level: String, tag: String, content: String) {
         val b = StringBuilder()
+        @Suppress("DEPRECATION")
         b.append(Thread.currentThread().id)
         b.append(" ")
         b.append(level)

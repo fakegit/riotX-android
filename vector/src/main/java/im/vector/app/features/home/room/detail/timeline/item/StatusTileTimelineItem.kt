@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.home.room.detail.timeline.item
 
@@ -26,12 +17,13 @@ import androidx.core.view.updateLayoutParams
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
 import im.vector.app.R
+import im.vector.app.core.epoxy.ClickListener
 import im.vector.app.features.home.AvatarRenderer
 import im.vector.app.features.home.room.detail.timeline.MessageColorProvider
 import im.vector.app.features.home.room.detail.timeline.TimelineEventController
 
-@EpoxyModelClass(layout = R.layout.item_timeline_event_base_state)
-abstract class StatusTileTimelineItem : AbsBaseMessageItem<StatusTileTimelineItem.Holder>() {
+@EpoxyModelClass
+abstract class StatusTileTimelineItem : AbsBaseMessageItem<StatusTileTimelineItem.Holder>(R.layout.item_timeline_event_base_state) {
 
     override val baseAttributes: AbsBaseMessageItem.Attributes
         get() = attributes
@@ -39,7 +31,7 @@ abstract class StatusTileTimelineItem : AbsBaseMessageItem<StatusTileTimelineIte
     @EpoxyAttribute
     lateinit var attributes: Attributes
 
-    override fun getViewType() = STUB_ID
+    override fun getViewStubId() = STUB_ID
 
     @SuppressLint("SetTextI18n")
     override fun bind(holder: Holder) {
@@ -55,7 +47,9 @@ abstract class StatusTileTimelineItem : AbsBaseMessageItem<StatusTileTimelineIte
         val startDrawable = when (attributes.shieldUIState) {
             ShieldUIState.GREEN -> R.drawable.ic_shield_trusted
             ShieldUIState.BLACK -> R.drawable.ic_shield_black
-            ShieldUIState.RED   -> R.drawable.ic_shield_warning
+            ShieldUIState.RED -> R.drawable.ic_shield_warning
+            ShieldUIState.WAITING -> R.drawable.ic_room_profile_member_list
+            ShieldUIState.ERROR -> R.drawable.ic_warning_badge
         }
 
         holder.titleView.setCompoundDrawablesWithIntrinsicBounds(
@@ -74,7 +68,7 @@ abstract class StatusTileTimelineItem : AbsBaseMessageItem<StatusTileTimelineIte
     }
 
     companion object {
-        private const val STUB_ID = R.id.messageVerificationDoneStub
+        private val STUB_ID = R.id.messageVerificationDoneStub
     }
 
     /**
@@ -82,21 +76,24 @@ abstract class StatusTileTimelineItem : AbsBaseMessageItem<StatusTileTimelineIte
      */
     data class Attributes(
             val shieldUIState: ShieldUIState,
-            val title: CharSequence,
-            val description: CharSequence,
+            val title: String,
+            val description: String,
             override val informationData: MessageInformationData,
             override val avatarRenderer: AvatarRenderer,
             override val messageColorProvider: MessageColorProvider,
             override val itemLongClickListener: View.OnLongClickListener? = null,
-            override val itemClickListener: View.OnClickListener? = null,
+            override val itemClickListener: ClickListener? = null,
             override val reactionPillCallback: TimelineEventController.ReactionPillCallback? = null,
             override val readReceiptsCallback: TimelineEventController.ReadReceiptsCallback? = null,
-            val emojiTypeFace: Typeface? = null
+            val emojiTypeFace: Typeface? = null,
+            override val reactionsSummaryEvents: ReactionsSummaryEvents? = null
     ) : AbsBaseMessageItem.Attributes
 
     enum class ShieldUIState {
         BLACK,
         RED,
-        GREEN
+        GREEN,
+        WAITING,
+        ERROR
     }
 }

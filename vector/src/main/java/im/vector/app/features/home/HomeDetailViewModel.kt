@@ -1,97 +1,183 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home
 
-import androidx.lifecycle.viewModelScope
-import com.airbnb.mvrx.FragmentViewModelContext
-import com.airbnb.mvrx.MvRxViewModelFactory
+import androidx.lifecycle.asFlow
+import com.airbnb.mvrx.MavericksViewModelFactory
 import com.airbnb.mvrx.ViewModelContext
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import im.vector.app.core.di.HasScreenInjector
-import im.vector.app.core.platform.EmptyViewEvents
+import im.vector.app.SpaceStateHandler
+import im.vector.app.core.di.MavericksAssistedViewModelFactory
+import im.vector.app.core.di.hiltMavericksViewModelFactory
+import im.vector.app.core.extensions.singletonEntryPoint
 import im.vector.app.core.platform.VectorViewModel
-import im.vector.app.core.resources.StringProvider
-import im.vector.app.features.grouplist.SelectedGroupDataSource
+import im.vector.app.features.VectorOverrides
+import im.vector.app.features.call.dialpad.DialPadLookup
+import im.vector.app.features.call.lookup.CallProtocolsChecker
+import im.vector.app.features.call.webrtc.WebRtcCallManager
+import im.vector.app.features.createdirect.DirectRoomHelper
+import im.vector.app.features.invite.AutoAcceptInvites
+import im.vector.app.features.invite.showInvites
+import im.vector.app.features.settings.VectorDataStore
 import im.vector.app.features.ui.UiStateRepository
+import im.vector.lib.core.utils.flow.throttleFirst
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import org.matrix.android.sdk.api.query.RoomCategoryFilter
+import org.matrix.android.sdk.api.query.toActiveSpaceOrNoFilter
+import org.matrix.android.sdk.api.query.toActiveSpaceOrOrphanRooms
 import org.matrix.android.sdk.api.session.Session
+import org.matrix.android.sdk.api.session.crypto.NewSessionListener
+import org.matrix.android.sdk.api.session.room.RoomSortOrder
 import org.matrix.android.sdk.api.session.room.model.Membership
 import org.matrix.android.sdk.api.session.room.roomSummaryQueryParams
-import org.matrix.android.sdk.rx.asObservable
-import org.matrix.android.sdk.rx.rx
+import org.matrix.android.sdk.api.session.sync.SyncRequestState
+import org.matrix.android.sdk.api.util.toMatrixItem
+import org.matrix.android.sdk.flow.flow
 import timber.log.Timber
-import java.util.concurrent.TimeUnit
 
 /**
  * View model used to update the home bottom bar notification counts, observe the sync state and
- * change the selected room list view
+ * change the selected room list view.
  */
-class HomeDetailViewModel @AssistedInject constructor(@Assisted initialState: HomeDetailViewState,
-                                                      private val session: Session,
-                                                      private val uiStateRepository: UiStateRepository,
-                                                      private val selectedGroupStore: SelectedGroupDataSource,
-                                                      private val stringProvider: StringProvider)
-    : VectorViewModel<HomeDetailViewState, HomeDetailAction, EmptyViewEvents>(initialState) {
+class HomeDetailViewModel @AssistedInject constructor(
+        @Assisted initialState: HomeDetailViewState,
+        private val session: Session,
+        private val uiStateRepository: UiStateRepository,
+        private val vectorDataStore: VectorDataStore,
+        private val callManager: WebRtcCallManager,
+        private val directRoomHelper: DirectRoomHelper,
+        private val spaceStateHandler: SpaceStateHandler,
+        private val autoAcceptInvites: AutoAcceptInvites,
+        private val vectorOverrides: VectorOverrides,
+        private val showVerifyDeviceBannerChecker: ShowVerifyDeviceBannerChecker,
+) : VectorViewModel<HomeDetailViewState, HomeDetailAction, HomeDetailViewEvents>(initialState),
+        CallProtocolsChecker.Listener {
 
     @AssistedFactory
-    interface Factory {
-        fun create(initialState: HomeDetailViewState): HomeDetailViewModel
+    interface Factory : MavericksAssistedViewModelFactory<HomeDetailViewModel, HomeDetailViewState> {
+        override fun create(initialState: HomeDetailViewState): HomeDetailViewModel
     }
 
-    companion object : MvRxViewModelFactory<HomeDetailViewModel, HomeDetailViewState> {
+    companion object : MavericksViewModelFactory<HomeDetailViewModel, HomeDetailViewState> by hiltMavericksViewModelFactory() {
 
-        override fun initialState(viewModelContext: ViewModelContext): HomeDetailViewState? {
-            val uiStateRepository = (viewModelContext.activity as HasScreenInjector).injector().uiStateRepository()
+        override fun initialState(viewModelContext: ViewModelContext): HomeDetailViewState {
+            val uiStateRepository = viewModelContext.activity.singletonEntryPoint().uiStateRepository()
             return HomeDetailViewState(
-                    displayMode = uiStateRepository.getDisplayMode()
+                    currentTab = HomeTab.RoomList(uiStateRepository.getDisplayMode())
             )
         }
+    }
 
-        @JvmStatic
-        override fun create(viewModelContext: ViewModelContext, state: HomeDetailViewState): HomeDetailViewModel? {
-            val fragment: HomeDetailFragment = (viewModelContext as FragmentViewModelContext).fragment()
-            return fragment.homeDetailViewModelFactory.create(state)
+    private val refreshRoomSummariesOnCryptoSessionChange = object : NewSessionListener {
+        override fun onNewSession(roomId: String?, sessionId: String) {
+            session.roomService().refreshJoinedRoomSummaryPreviews(roomId)
         }
     }
 
     init {
         observeSyncState()
-        observeSelectedGroupStore()
+        observeRoomGroupingMethod()
+        session.cryptoService().addNewSessionListener(refreshRoomSummariesOnCryptoSessionChange)
         observeRoomSummaries()
+        updatePstnSupportFlag()
+        observeDataStore()
+        observeCrossSigningState()
+        callManager.addProtocolsCheckerListener(this)
+        session.flow().liveUser(session.myUserId).execute {
+            copy(
+                    myMatrixItem = it.invoke()?.getOrNull()?.toMatrixItem()
+            )
+        }
+    }
+
+    private fun observeCrossSigningState() {
+        if (showVerifyDeviceBannerChecker.canShowVerifyDeviceBanner(session.myUserId)) {
+            session
+                    .flow()
+                    .liveCrossSigningInfo(session.myUserId)
+                    .onEach { info ->
+                        val isVerified = info.getOrNull()?.isTrusted() ?: false
+                        setState {
+                            copy(
+                                    showVerifyDeviceBanner = !isVerified,
+                            )
+                        }
+                    }
+                    .launchIn(viewModelScope)
+        }
+    }
+
+    private fun observeDataStore() {
+        vectorDataStore.pushCounterFlow.setOnEach { nbOfPush ->
+            copy(
+                    pushCounter = nbOfPush
+            )
+        }
+        vectorOverrides.forceDialPad.setOnEach { force ->
+            copy(
+                    forceDialPadTab = force
+            )
+        }
     }
 
     override fun handle(action: HomeDetailAction) {
         when (action) {
-            is HomeDetailAction.SwitchDisplayMode -> handleSwitchDisplayMode(action)
-            HomeDetailAction.MarkAllRoomsRead     -> handleMarkAllRoomsRead()
+            is HomeDetailAction.SwitchTab -> handleSwitchTab(action)
+            HomeDetailAction.MarkAllRoomsRead -> handleMarkAllRoomsRead()
+            is HomeDetailAction.StartCallWithPhoneNumber -> handleStartCallWithPhoneNumber(action)
         }
     }
 
-    private fun handleSwitchDisplayMode(action: HomeDetailAction.SwitchDisplayMode) = withState { state ->
-        if (state.displayMode != action.displayMode) {
-            setState {
-                copy(displayMode = action.displayMode)
+    private fun handleStartCallWithPhoneNumber(action: HomeDetailAction.StartCallWithPhoneNumber) {
+        viewModelScope.launch {
+            try {
+                _viewEvents.post(HomeDetailViewEvents.Loading)
+                val result = DialPadLookup(session, callManager, directRoomHelper).lookupPhoneNumber(action.phoneNumber)
+                callManager.startOutgoingCall(result.roomId, result.userId, isVideoCall = false)
+                _viewEvents.post(HomeDetailViewEvents.CallStarted)
+            } catch (failure: Throwable) {
+                _viewEvents.post(HomeDetailViewEvents.FailToCall(failure))
             }
+        }
+    }
 
-            uiStateRepository.storeDisplayMode(action.displayMode)
+    private fun handleSwitchTab(action: HomeDetailAction.SwitchTab) = withState { state ->
+        if (state.currentTab != action.tab) {
+            setState {
+                copy(currentTab = action.tab)
+            }
+            if (action.tab is HomeTab.RoomList) {
+                uiStateRepository.storeDisplayMode(action.tab.displayMode)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        callManager.removeProtocolsCheckerListener(this)
+        session.cryptoService().removeSessionListener(refreshRoomSummariesOnCryptoSessionChange)
+    }
+
+    override fun onPSTNSupportUpdated() {
+        updatePstnSupportFlag()
+    }
+
+    private fun updatePstnSupportFlag() {
+        setState {
+            copy(pstnSupportFlag = callManager.supportsPSTNProtocol)
         }
     }
 
@@ -100,7 +186,7 @@ class HomeDetailViewModel @AssistedInject constructor(@Assisted initialState: Ho
     private fun handleMarkAllRoomsRead() = withState { _ ->
         // questionable to use viewmodelscope
         viewModelScope.launch(Dispatchers.Default) {
-            val roomIds = session.getRoomSummaries(
+            val roomIds = session.roomService().getRoomSummaries(
                     roomSummaryQueryParams {
                         memberships = listOf(Membership.JOIN)
                         roomCategoryFilter = RoomCategoryFilter.ONLY_WITH_NOTIFICATIONS
@@ -108,7 +194,7 @@ class HomeDetailViewModel @AssistedInject constructor(@Assisted initialState: Ho
             )
                     .map { it.roomId }
             try {
-                session.markAllAsRead(roomIds)
+                session.roomService().markAllAsRead(roomIds)
             } catch (failure: Throwable) {
                 Timber.d(failure, "Failed to mark all as read")
             }
@@ -116,68 +202,82 @@ class HomeDetailViewModel @AssistedInject constructor(@Assisted initialState: Ho
     }
 
     private fun observeSyncState() {
-        session.rx()
+        session.flow()
                 .liveSyncState()
-                .subscribe { syncState ->
-                    setState {
-                        copy(syncState = syncState)
-                    }
+                .setOnEach { syncState ->
+                    copy(syncState = syncState)
                 }
-                .disposeOnClear()
+
+        session.syncService().getSyncRequestStateFlow()
+                .filterIsInstance<SyncRequestState.IncrementalSyncRequestState>()
+                .setOnEach {
+                    copy(incrementalSyncRequestState = it)
+                }
     }
 
-    private fun observeSelectedGroupStore() {
-        selectedGroupStore
-                .observe()
-                .subscribe {
-                    setState {
-                        copy(groupSummary = it)
-                    }
+    private fun observeRoomGroupingMethod() {
+        spaceStateHandler.getSelectedSpaceFlow()
+                .setOnEach {
+                    copy(
+                            selectedSpace = it.orNull()
+                    )
                 }
-                .disposeOnClear()
     }
 
     private fun observeRoomSummaries() {
-        session.getPagedRoomSummariesLive(
-                roomSummaryQueryParams {
-                    memberships = Membership.activeMemberships()
-                }
-        )
-                .asObservable()
-                .throttleFirst(300, TimeUnit.MILLISECONDS)
-                .subscribe {
-                    val dmInvites = session.getRoomSummaries(
-                            roomSummaryQueryParams {
-                                memberships = listOf(Membership.INVITE)
-                                roomCategoryFilter = RoomCategoryFilter.ONLY_DM
-                            }
-                    ).size
+        spaceStateHandler.getSelectedSpaceFlow().distinctUntilChanged().flatMapLatest {
+            // we use it as a trigger to all changes in room, but do not really load
+            // the actual models
+            session.roomService().getPagedRoomSummariesLive(
+                    roomSummaryQueryParams {
+                        memberships = Membership.activeMemberships()
+                    },
+                    sortOrder = RoomSortOrder.NONE
+            ).asFlow()
+        }
+                .throttleFirst(300)
+                .onEach {
+                    val activeSpaceRoomId = spaceStateHandler.getCurrentSpace()?.roomId
+                    var dmInvites = 0
+                    var roomsInvite = 0
+                    if (autoAcceptInvites.showInvites()) {
+                        dmInvites = session.roomService().getRoomSummaries(
+                                roomSummaryQueryParams {
+                                    memberships = listOf(Membership.INVITE)
+                                    roomCategoryFilter = RoomCategoryFilter.ONLY_DM
+                                    spaceFilter = activeSpaceRoomId.toActiveSpaceOrNoFilter()
+                                }
+                        ).size
 
-                    val roomsInvite = session.getRoomSummaries(
-                            roomSummaryQueryParams {
-                                memberships = listOf(Membership.INVITE)
-                                roomCategoryFilter = RoomCategoryFilter.ONLY_ROOMS
-                            }
-                    ).size
+                        roomsInvite = session.roomService().getRoomSummaries(
+                                roomSummaryQueryParams {
+                                    memberships = listOf(Membership.INVITE)
+                                    roomCategoryFilter = RoomCategoryFilter.ONLY_ROOMS
+                                    spaceFilter = activeSpaceRoomId.toActiveSpaceOrOrphanRooms()
+                                }
+                        ).size
+                    }
 
-                    val dmRooms = session.getNotificationCountForRooms(
+                    val dmRooms = session.roomService().getNotificationCountForRooms(
                             roomSummaryQueryParams {
                                 memberships = listOf(Membership.JOIN)
                                 roomCategoryFilter = RoomCategoryFilter.ONLY_DM
+                                spaceFilter = activeSpaceRoomId.toActiveSpaceOrNoFilter()
                             }
                     )
 
-                    val otherRooms = session.getNotificationCountForRooms(
+                    val otherRooms = session.roomService().getNotificationCountForRooms(
                             roomSummaryQueryParams {
                                 memberships = listOf(Membership.JOIN)
                                 roomCategoryFilter = RoomCategoryFilter.ONLY_ROOMS
+                                spaceFilter = activeSpaceRoomId.toActiveSpaceOrOrphanRooms()
                             }
                     )
 
                     setState {
                         copy(
                                 notificationCountCatchup = dmRooms.totalCount + otherRooms.totalCount + roomsInvite + dmInvites,
-                                notificationHighlightCatchup = dmRooms.isHighlight || otherRooms.isHighlight,
+                                notificationHighlightCatchup = dmRooms.isHighlight || otherRooms.isHighlight || (dmInvites + roomsInvite) > 0,
                                 notificationCountPeople = dmRooms.totalCount + dmInvites,
                                 notificationHighlightPeople = dmRooms.isHighlight || dmInvites > 0,
                                 notificationCountRooms = otherRooms.totalCount + roomsInvite,
@@ -186,6 +286,6 @@ class HomeDetailViewModel @AssistedInject constructor(@Assisted initialState: Ho
                         )
                     }
                 }
-                .disposeOnClear()
+                .launchIn(viewModelScope)
     }
 }

@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.login
@@ -22,11 +13,11 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import com.airbnb.mvrx.args
-import im.vector.app.R
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.databinding.FragmentLoginWaitForEmailBinding
+import im.vector.lib.strings.CommonStrings
 import kotlinx.parcelize.Parcelize
 import org.matrix.android.sdk.api.failure.is401
-import javax.inject.Inject
 
 @Parcelize
 data class LoginWaitForEmailFragmentArgument(
@@ -34,9 +25,11 @@ data class LoginWaitForEmailFragmentArgument(
 ) : Parcelable
 
 /**
- * In this screen, the user is asked to check his emails
+ * In this screen, the user is asked to check their emails.
  */
-class LoginWaitForEmailFragment @Inject constructor() : AbstractLoginFragment<FragmentLoginWaitForEmailBinding>() {
+@AndroidEntryPoint
+class LoginWaitForEmailFragment :
+        AbstractLoginFragment<FragmentLoginWaitForEmailBinding>() {
 
     private val params: LoginWaitForEmailFragmentArgument by args()
 
@@ -63,7 +56,7 @@ class LoginWaitForEmailFragment @Inject constructor() : AbstractLoginFragment<Fr
     }
 
     private fun setupUi() {
-        views.loginWaitForEmailNotice.text = getString(R.string.login_wait_for_email_notice, params.email)
+        views.loginWaitForEmailNotice.text = getString(CommonStrings.login_wait_for_email_notice, params.email)
     }
 
     override fun onError(throwable: Throwable) {

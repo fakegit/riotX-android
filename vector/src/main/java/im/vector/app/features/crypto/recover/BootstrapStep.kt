@@ -1,20 +1,13 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.crypto.recover
+
+import im.vector.app.features.raw.wellknown.SecureBackupMethod
 
 /**
  * TODO The schema is not up to date
@@ -89,25 +82,27 @@ sealed class BootstrapStep {
     object CheckingMigration : BootstrapStep()
 
     // Use will be asked to choose between passphrase or recovery key, or to start process if a key backup exists
-    data class FirstForm(val keyBackUpExist: Boolean, val reset: Boolean = false) : BootstrapStep()
+    data class FirstForm(val keyBackUpExist: Boolean, val reset: Boolean = false, val methods: SecureBackupMethod) : BootstrapStep()
 
-    data class SetupPassphrase(val isPasswordVisible: Boolean) : BootstrapStep()
-    data class ConfirmPassphrase(val isPasswordVisible: Boolean) : BootstrapStep()
+    object SetupPassphrase : BootstrapStep()
+    object ConfirmPassphrase : BootstrapStep()
 
     data class AccountReAuth(val failure: String? = null) : BootstrapStep()
 
     abstract class GetBackupSecretForMigration : BootstrapStep()
-    data class GetBackupSecretPassForMigration(val isPasswordVisible: Boolean, val useKey: Boolean) : GetBackupSecretForMigration()
+    data class GetBackupSecretPassForMigration(val useKey: Boolean) : GetBackupSecretForMigration()
     object GetBackupSecretKeyForMigration : GetBackupSecretForMigration()
 
     object Initializing : BootstrapStep()
     data class SaveRecoveryKey(val isSaved: Boolean) : BootstrapStep()
     object DoneSuccess : BootstrapStep()
+
+    data class Error(val error: Throwable) : BootstrapStep()
 }
 
 fun BootstrapStep.GetBackupSecretForMigration.useKey(): Boolean {
     return when (this) {
         is BootstrapStep.GetBackupSecretPassForMigration -> useKey
-        else                                             -> true
+        else -> true
     }
 }

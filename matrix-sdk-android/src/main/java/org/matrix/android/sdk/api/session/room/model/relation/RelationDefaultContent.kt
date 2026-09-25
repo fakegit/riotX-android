@@ -23,5 +23,10 @@ data class RelationDefaultContent(
         @Json(name = "rel_type") override val type: String?,
         @Json(name = "event_id") override val eventId: String?,
         @Json(name = "m.in_reply_to") override val inReplyTo: ReplyToContent? = null,
-        @Json(name = "option") override val option: Int? = null
+        @Json(name = "option") override val option: Int? = null,
+        @Json(name = "is_falling_back") override val isFallingBack: Boolean? = null
 ) : RelationContent
+
+fun RelationDefaultContent.shouldRenderInThread(): Boolean = isFallingBack == false
+
+fun RelationDefaultContent?.isReply(): Boolean = this?.inReplyTo?.eventId != null

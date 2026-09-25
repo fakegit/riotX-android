@@ -23,9 +23,11 @@ import io.realm.RealmConfiguration
 import org.matrix.android.sdk.api.failure.shouldBeRetried
 import org.matrix.android.sdk.api.session.crypto.CryptoService
 import org.matrix.android.sdk.api.session.room.send.SendState
+import org.matrix.android.sdk.internal.SessionManager
 import org.matrix.android.sdk.internal.crypto.tasks.SendEventTask
 import org.matrix.android.sdk.internal.di.SessionDatabase
 import org.matrix.android.sdk.internal.session.SessionComponent
+import org.matrix.android.sdk.internal.util.toMatrixErrorStr
 import org.matrix.android.sdk.internal.worker.SessionSafeCoroutineWorker
 import org.matrix.android.sdk.internal.worker.SessionWorkerParams
 import timber.log.Timber
@@ -34,12 +36,11 @@ import javax.inject.Inject
 // private const val MAX_NUMBER_OF_RETRY_BEFORE_FAILING = 3
 
 /**
- * Possible previous worker: [EncryptEventWorker] or first worker
- * Possible next worker    : None
+ * Possible previous worker: [EncryptEventWorker] or first worker.
+ * Possible next worker    : None.
  */
-internal class SendEventWorker(context: Context,
-                               params: WorkerParameters)
-    : SessionSafeCoroutineWorker<SendEventWorker.Params>(context, params, Params::class.java) {
+internal class SendEventWorker(context: Context, params: WorkerParameters, sessionManager: SessionManager) :
+        SessionSafeCoroutineWorker<SendEventWorker.Params>(context, params, sessionManager, Params::class.java) {
 
     @JsonClass(generateAdapter = true)
     internal data class Params(
@@ -77,23 +78,33 @@ internal class SendEventWorker(context: Context,
         }
 
         if (params.lastFailureMessage != null) {
-            localEchoRepository.updateSendState(event.eventId, event.roomId, SendState.UNDELIVERED)
+            localEchoRepository.updateSendState(
+                    eventId = event.eventId,
+                    roomId = event.roomId,
+                    sendState = SendState.UNDELIVERED,
+                    sendStateDetails = params.lastFailureMessage
+            )
             // Transmit the error
             return Result.success(inputData)
                     .also { Timber.e("Work cancelled due to input error from parent") }
         }
 
-        Timber.v("## SendEvent: [${System.currentTimeMillis()}] Send event ${params.eventId}")
+        Timber.v("## SendEvent: Send event ${params.eventId}")
         return try {
             sendEventTask.execute(SendEventTask.Params(event, params.isEncrypted ?: cryptoService.isRoomEncrypted(event.roomId)))
             Result.success()
         } catch (exception: Throwable) {
             if (/*currentAttemptCount >= MAX_NUMBER_OF_RETRY_BEFORE_FAILING ||**/ !exception.shouldBeRetried()) {
-                Timber.e("## SendEvent: [${System.currentTimeMillis()}]  Send event Failed cannot retry ${params.eventId} > ${exception.localizedMessage}")
-                localEchoRepository.updateSendState(event.eventId, event.roomId, SendState.UNDELIVERED)
+                Timber.e("## SendEvent: Send event Failed cannot retry ${params.eventId} > ${exception.localizedMessage}")
+                localEchoRepository.updateSendState(
+                        eventId = event.eventId,
+                        roomId = event.roomId,
+                        sendState = SendState.UNDELIVERED,
+                        sendStateDetails = exception.toMatrixErrorStr()
+                )
                 Result.success()
             } else {
-                Timber.e("## SendEvent: [${System.currentTimeMillis()}]  Send event Failed schedule retry ${params.eventId} > ${exception.localizedMessage}")
+                Timber.e("## SendEvent: Send event Failed schedule retry ${params.eventId} > ${exception.localizedMessage}")
                 Result.retry()
             }
         }

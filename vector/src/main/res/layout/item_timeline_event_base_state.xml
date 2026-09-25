@@ -5,13 +5,14 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:addStatesFromChildren="true"
-    android:background="?attr/selectableItemBackground">
+    android:background="?attr/selectableItemBackground"
+    tools:viewBindingIgnore="true">
 
     <im.vector.app.core.platform.CheckableView
         android:id="@+id/messageSelectedBackground"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_alignBottom="@+id/informationBottom"
+        android:layout_alignBottom="@id/informationBottom"
         android:layout_alignParentTop="true"
         android:background="@drawable/highlighted_message_background" />
 
@@ -30,6 +31,7 @@
 
     <FrameLayout
         android:id="@+id/viewStubContainer"
+        style="@style/TimelineContentStubContainerParams"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_alignParentTop="true"
@@ -50,25 +52,31 @@
             android:id="@+id/messageVerificationRequestStub"
             style="@style/TimelineContentStubBaseParams"
             android:layout="@layout/item_timeline_event_verification_stub"
-            tools:layout_marginTop="250dp"
+            tools:layout_marginTop="200dp"
             tools:visibility="visible" />
 
         <ViewStub
             android:id="@+id/messageVerificationDoneStub"
             style="@style/TimelineContentStubBaseParams"
             android:layout="@layout/item_timeline_event_status_tile_stub"
-            tools:layout_marginTop="450dp"
+            tools:layout_marginTop="360dp"
             tools:visibility="visible" />
 
         <ViewStub
             android:id="@+id/messageWidgetStub"
             style="@style/TimelineContentStubBaseParams"
             android:layout="@layout/item_timeline_event_widget_stub"
-            tools:layout_marginTop="280dp"
+            tools:layout_marginTop="440dp"
+            tools:visibility="visible" />
+
+        <ViewStub
+            android:id="@+id/messageElementCallStub"
+            style="@style/TimelineContentStubBaseParams"
+            android:layout="@layout/item_timeline_event_element_call_tile_stub"
+            tools:layout_marginTop="520dp"
             tools:visibility="visible" />
 
     </FrameLayout>
-
 
     <im.vector.app.core.ui.views.ShieldImageView
         android:id="@+id/messageE2EDecoration"
@@ -84,14 +92,13 @@
         android:id="@+id/messageFailToSendIndicator"
         android:layout_width="14dp"
         android:layout_height="14dp"
-        android:layout_alignTop="@+id/viewStubContainer"
+        android:layout_alignTop="@id/viewStubContainer"
         android:layout_marginStart="2dp"
-        android:layout_toEndOf="@+id/viewStubContainer"
+        android:layout_toEndOf="@id/viewStubContainer"
         android:contentDescription="@string/a11y_error_message_not_sent"
         android:src="@drawable/ic_warning_badge"
         android:visibility="gone"
         tools:visibility="visible" />
-
 
     <LinearLayout
         android:id="@+id/informationBottom"

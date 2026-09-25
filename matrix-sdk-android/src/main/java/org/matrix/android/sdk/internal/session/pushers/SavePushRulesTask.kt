@@ -16,9 +16,8 @@
 package org.matrix.android.sdk.internal.session.pushers
 
 import com.zhuinden.monarchy.Monarchy
-import org.matrix.android.sdk.api.pushrules.RuleScope
-import org.matrix.android.sdk.api.pushrules.RuleSetKey
-import org.matrix.android.sdk.api.pushrules.rest.GetPushRulesResponse
+import org.matrix.android.sdk.api.session.pushrules.RuleScope
+import org.matrix.android.sdk.api.session.pushrules.RuleSetKey
 import org.matrix.android.sdk.internal.database.mapper.PushRulesMapper
 import org.matrix.android.sdk.internal.database.model.PushRulesEntity
 import org.matrix.android.sdk.internal.database.model.deleteOnCascade
@@ -28,7 +27,7 @@ import org.matrix.android.sdk.internal.util.awaitTransaction
 import javax.inject.Inject
 
 /**
- * Save the push rules in DB
+ * Save the push rules in DB.
  */
 internal interface SavePushRulesTask : Task<SavePushRulesTask.Params, Unit> {
     data class Params(val pushRules: GetPushRulesResponse)
@@ -43,7 +42,6 @@ internal class DefaultSavePushRulesTask @Inject constructor(@SessionDatabase pri
                     .findAll()
                     .forEach { it.deleteOnCascade() }
 
-            // Save only global rules for the moment
             val globalRules = params.pushRules.global
 
             val content = PushRulesEntity(RuleScope.GLOBAL).apply { kind = RuleSetKey.CONTENT }

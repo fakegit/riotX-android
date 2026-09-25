@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.html
@@ -20,73 +11,119 @@ import android.content.Context
 import android.text.Spannable
 import android.text.Spanned
 import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import im.vector.app.core.di.ActiveSessionHolder
 import im.vector.app.core.glide.GlideApp
 import im.vector.app.features.home.AvatarRenderer
 import io.noties.markwon.core.spans.LinkSpan
+import org.matrix.android.sdk.api.extensions.orFalse
+import org.matrix.android.sdk.api.session.getRoomSummary
+import org.matrix.android.sdk.api.session.getUser
 import org.matrix.android.sdk.api.session.permalinks.PermalinkData
 import org.matrix.android.sdk.api.session.permalinks.PermalinkParser
 import org.matrix.android.sdk.api.session.room.model.RoomSummary
 import org.matrix.android.sdk.api.util.MatrixItem
 import org.matrix.android.sdk.api.util.toMatrixItem
 
-class PillsPostProcessor @AssistedInject constructor(@Assisted private val roomId: String?,
-                                                     private val context: Context,
-                                                     private val avatarRenderer: AvatarRenderer,
-                                                     private val sessionHolder: ActiveSessionHolder)
-    : EventHtmlRenderer.PostProcessor {
+class PillsPostProcessor @AssistedInject constructor(
+        @Assisted private val roomId: String?,
+        private val context: Context,
+        private val avatarRenderer: AvatarRenderer,
+        private val sessionHolder: ActiveSessionHolder
+) :
+        EventHtmlRenderer.PostProcessor {
+
+    /* ==========================================================================================
+     * Public api
+     * ========================================================================================== */
 
     @AssistedFactory
     interface Factory {
         fun create(roomId: String?): PillsPostProcessor
     }
 
+    /* ==========================================================================================
+     * Specialization
+     * ========================================================================================== */
+
     override fun afterRender(renderedText: Spannable) {
-        addPillSpans(renderedText, roomId)
+        addPillSpans(renderedText)
     }
 
-    private fun addPillSpans(renderedText: Spannable, roomId: String?) {
+    /* ==========================================================================================
+     * Helper methods
+     * ========================================================================================== */
+
+    private fun addPillSpans(renderedText: Spannable) {
+        addLinkSpans(renderedText)
+    }
+
+    private fun addPillSpan(
+            renderedText: Spannable,
+            pillSpan: PillImageSpan,
+            startSpan: Int,
+            endSpan: Int
+    ) {
+        renderedText.setSpan(pillSpan, startSpan, endSpan, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+
+    private fun addLinkSpans(renderedText: Spannable) {
         // We let markdown handle links and then we add PillImageSpan if needed.
         val linkSpans = renderedText.getSpans(0, renderedText.length, LinkSpan::class.java)
         linkSpans.forEach { linkSpan ->
-            val pillSpan = linkSpan.createPillSpan(roomId) ?: return@forEach
+            val pillSpan = linkSpan.createPillSpan() ?: return@forEach
             val startSpan = renderedText.getSpanStart(linkSpan)
             val endSpan = renderedText.getSpanEnd(linkSpan)
-            renderedText.setSpan(pillSpan, startSpan, endSpan, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            // GlideImagesPlugin causes duplicated pills if we have a nested spans in the pill span,
+            // such as images or italic text.
+            // Accordingly, it's better to remove all spans that are contained in this span before rendering.
+            renderedText.getSpans(startSpan, endSpan, Any::class.java).forEach remove@{
+                if (it !is LinkSpan) {
+                    // Make sure to only remove spans that are contained in this link, and not are bigger than this link, e.g. like reply-blocks
+                    val start = renderedText.getSpanStart(it)
+                    if (start < startSpan) return@remove
+                    val end = renderedText.getSpanEnd(it)
+                    if (end > endSpan) return@remove
+
+                    renderedText.removeSpan(it)
+                }
+            }
+            addPillSpan(renderedText, pillSpan, startSpan, endSpan)
         }
     }
 
-    private fun LinkSpan.createPillSpan(roomId: String?): PillImageSpan? {
-        val permalinkData = PermalinkParser.parse(url)
-        val matrixItem = when (permalinkData) {
-            is PermalinkData.UserLink -> {
-                if (roomId == null) {
-                    sessionHolder.getSafeActiveSession()?.getUser(permalinkData.userId)?.toMatrixItem()
-                } else {
-                    sessionHolder.getSafeActiveSession()?.getRoomMember(permalinkData.userId, roomId)?.toMatrixItem()
-                }
-            }
-            is PermalinkData.RoomLink -> {
-                if (permalinkData.eventId == null) {
-                    val room: RoomSummary? = sessionHolder.getSafeActiveSession()?.getRoomSummary(permalinkData.roomIdOrAlias)
-                    if (permalinkData.isRoomAlias) {
-                        MatrixItem.RoomAliasItem(permalinkData.roomIdOrAlias, room?.displayName, room?.avatarUrl)
-                    } else {
-                        MatrixItem.RoomItem(permalinkData.roomIdOrAlias, room?.displayName, room?.avatarUrl)
-                    }
-                } else {
-                    // Exclude event link (used in reply events, we do not want to pill the "in reply to")
-                    null
-                }
-            }
-            is PermalinkData.GroupLink -> {
-                val group = sessionHolder.getSafeActiveSession()?.getGroupSummary(permalinkData.groupId)
-                MatrixItem.GroupItem(permalinkData.groupId, group?.displayName, group?.avatarUrl)
-            }
-            else                       -> null
-        } ?: return null
-        return PillImageSpan(GlideApp.with(context), avatarRenderer, context, matrixItem)
+    private fun createPillImageSpan(matrixItem: MatrixItem) =
+            PillImageSpan(GlideApp.with(context), avatarRenderer, context, matrixItem)
+
+    private fun LinkSpan.createPillSpan(): PillImageSpan? {
+        val supportedHosts = context.resources.getStringArray(im.vector.app.config.R.array.permalink_supported_hosts)
+        val isPermalinkSupported = sessionHolder.getSafeActiveSession()?.permalinkService()?.isPermalinkSupported(supportedHosts, url).orFalse()
+        if (isPermalinkSupported) {
+            val matrixItem = when (val permalinkData = PermalinkParser.parse(url)) {
+                is PermalinkData.UserLink -> permalinkData.toMatrixItem()
+                is PermalinkData.RoomLink -> permalinkData.toMatrixItem()
+                else -> null
+            } ?: return null
+            return createPillImageSpan(matrixItem)
+        } else {
+            return null
+        }
     }
+
+    private fun PermalinkData.UserLink.toMatrixItem(): MatrixItem? =
+            roomId?.let { sessionHolder.getSafeActiveSession()?.roomService()?.getRoomMember(userId, it)?.toMatrixItem() }
+                    ?: sessionHolder.getSafeActiveSession()?.getUser(userId)?.toMatrixItem()
+
+    private fun PermalinkData.RoomLink.toMatrixItem(): MatrixItem? =
+            if (eventId == null) {
+                val room: RoomSummary? = sessionHolder.getSafeActiveSession()?.getRoomSummary(roomIdOrAlias)
+                when {
+                    isRoomAlias -> MatrixItem.RoomAliasItem(roomIdOrAlias, room?.displayName, room?.avatarUrl)
+                    else -> MatrixItem.RoomItem(roomIdOrAlias, room?.displayName, room?.avatarUrl)
+                }
+            } else {
+                // Exclude event link (used in reply events, we do not want to pill the "in reply to")
+                null
+            }
 }

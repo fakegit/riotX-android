@@ -19,6 +19,8 @@ package org.matrix.android.sdk.internal.crypto.crosssigning
 import org.amshove.kluent.shouldBeNull
 import org.amshove.kluent.shouldBeTrue
 import org.junit.Test
+import org.matrix.android.sdk.api.util.fromBase64
+import org.matrix.android.sdk.api.util.fromBase64Safe
 
 @Suppress("SpellCheckingInspection")
 class ExtensionsKtTest {

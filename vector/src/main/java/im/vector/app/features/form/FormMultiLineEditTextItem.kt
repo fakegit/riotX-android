@@ -1,46 +1,34 @@
 /*
- * Copyright (c) 2021 New Vector Ltd
+ * Copyright 2021-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.form
 
 import android.graphics.Typeface
 import android.text.Editable
-import android.view.View
-import androidx.core.view.isVisible
 import com.airbnb.epoxy.EpoxyAttribute
 import com.airbnb.epoxy.EpoxyModelClass
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import im.vector.app.R
+import im.vector.app.core.epoxy.TextListener
 import im.vector.app.core.epoxy.VectorEpoxyHolder
 import im.vector.app.core.epoxy.VectorEpoxyModel
-import im.vector.app.core.extensions.setTextSafe
+import im.vector.app.core.epoxy.addTextChangedListenerOnce
+import im.vector.app.core.epoxy.setValueOnce
 import im.vector.app.core.platform.SimpleTextWatcher
 
-@EpoxyModelClass(layout = R.layout.item_form_multiline_text_input)
-abstract class FormMultiLineEditTextItem : VectorEpoxyModel<FormMultiLineEditTextItem.Holder>() {
+@EpoxyModelClass
+abstract class FormMultiLineEditTextItem : VectorEpoxyModel<FormMultiLineEditTextItem.Holder>(R.layout.item_form_multiline_text_input) {
 
     @EpoxyAttribute
     var hint: String? = null
 
     @EpoxyAttribute
     var value: String? = null
-
-    @EpoxyAttribute
-    var showBottomSeparator: Boolean = true
 
     @EpoxyAttribute
     var errorMessage: String? = null
@@ -57,8 +45,8 @@ abstract class FormMultiLineEditTextItem : VectorEpoxyModel<FormMultiLineEditTex
     @EpoxyAttribute
     var typeFace: Typeface = Typeface.DEFAULT
 
-    @EpoxyAttribute
-    var onTextChange: ((String) -> Unit)? = null
+    @EpoxyAttribute(EpoxyAttribute.Option.DoNotHash)
+    var onTextChange: TextListener? = null
 
     private val onTextChangeListener = object : SimpleTextWatcher() {
         override fun afterTextChanged(s: Editable) {
@@ -73,15 +61,14 @@ abstract class FormMultiLineEditTextItem : VectorEpoxyModel<FormMultiLineEditTex
         holder.textInputLayout.error = errorMessage
 
         holder.textInputEditText.typeface = typeFace
-        holder.textInputEditText.textSize = textSizeSp?.toFloat() ?: 12f
+        holder.textInputEditText.textSize = textSizeSp?.toFloat() ?: 14f
         holder.textInputEditText.minLines = minLines
 
-        // Update only if text is different and value is not null
-        holder.textInputEditText.setTextSafe(value)
+        holder.setValueOnce(holder.textInputEditText, value)
+
         holder.textInputEditText.isEnabled = enabled
 
-        holder.textInputEditText.addTextChangedListener(onTextChangeListener)
-        holder.bottomSeparator.isVisible = showBottomSeparator
+        holder.textInputEditText.addTextChangedListenerOnce(onTextChangeListener)
     }
 
     override fun shouldSaveViewState(): Boolean {
@@ -96,6 +83,5 @@ abstract class FormMultiLineEditTextItem : VectorEpoxyModel<FormMultiLineEditTex
     class Holder : VectorEpoxyHolder() {
         val textInputLayout by bind<TextInputLayout>(R.id.formMultiLineTextInputLayout)
         val textInputEditText by bind<TextInputEditText>(R.id.formMultiLineEditText)
-        val bottomSeparator by bind<View>(R.id.formTextInputDivider)
     }
 }

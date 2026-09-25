@@ -1,17 +1,8 @@
 /*
- * Copyright (c) 2020 New Vector Ltd
+ * Copyright 2020-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.matrixto
@@ -21,41 +12,37 @@ import android.os.Parcelable
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
-import com.airbnb.mvrx.Fail
-import com.airbnb.mvrx.Loading
-import com.airbnb.mvrx.MvRx
-import com.airbnb.mvrx.Success
-import com.airbnb.mvrx.Uninitialized
+import androidx.fragment.app.Fragment
+import com.airbnb.mvrx.Incomplete
 import com.airbnb.mvrx.fragmentViewModel
 import com.airbnb.mvrx.withState
-import im.vector.app.core.di.ScreenComponent
-import im.vector.app.core.extensions.setTextOrHide
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import dagger.hilt.android.AndroidEntryPoint
+import im.vector.app.core.extensions.commitTransaction
 import im.vector.app.core.platform.VectorBaseBottomSheetDialogFragment
 import im.vector.app.databinding.BottomSheetMatrixToCardBinding
+import im.vector.app.features.analytics.plan.ViewRoom
 import im.vector.app.features.home.AvatarRenderer
+import im.vector.lib.strings.CommonStrings
 import kotlinx.parcelize.Parcelize
+import org.matrix.android.sdk.api.session.permalinks.PermalinkData
 import javax.inject.Inject
+import kotlin.reflect.KClass
 
+@AndroidEntryPoint
 class MatrixToBottomSheet :
         VectorBaseBottomSheetDialogFragment<BottomSheetMatrixToCardBinding>() {
 
     @Parcelize
     data class MatrixToArgs(
-            val matrixToLink: String
+            val matrixToLink: String,
+            val origin: OriginOfMatrixTo
     ) : Parcelable
 
     @Inject lateinit var avatarRenderer: AvatarRenderer
 
-    @Inject
-    lateinit var matrixToBottomSheetViewModelFactory: MatrixToBottomSheetViewModel.Factory
-
-    override fun injectWith(injector: ScreenComponent) {
-        injector.inject(this)
-    }
-
-    private var interactionListener: InteractionListener? = null
+    var interactionListener: InteractionListener? = null
 
     override fun getBinding(inflater: LayoutInflater, container: ViewGroup?): BottomSheetMatrixToCardBinding {
         return BottomSheetMatrixToCardBinding.inflate(inflater, container, false)
@@ -64,85 +51,69 @@ class MatrixToBottomSheet :
     private val viewModel by fragmentViewModel(MatrixToBottomSheetViewModel::class)
 
     interface InteractionListener {
-        fun navigateToRoom(roomId: String)
+        fun mxToBottomSheetNavigateToRoom(roomId: String, trigger: ViewRoom.Trigger?)
+        fun mxToBottomSheetSwitchToSpace(spaceId: String)
     }
 
     override fun invalidate() = withState(viewModel) { state ->
         super.invalidate()
-        when (val item = state.matrixItem) {
-            Uninitialized -> {
-                views.matrixToCardContentLoading.isVisible = false
-                views.matrixToCardUserContentVisibility.isVisible = false
+        when (state.linkType) {
+            is PermalinkData.RoomLink -> {
+                views.matrixToCardContentLoading.isVisible = state.roomPeekResult is Incomplete
+                showFragment(MatrixToRoomSpaceFragment::class, Bundle())
             }
-            is Loading -> {
-                views.matrixToCardContentLoading.isVisible = true
-                views.matrixToCardUserContentVisibility.isVisible = false
+            is PermalinkData.UserLink -> {
+                views.matrixToCardContentLoading.isVisible = state.matrixItem is Incomplete
+                showFragment(MatrixToUserFragment::class, Bundle())
             }
-            is Success -> {
-                views.matrixToCardContentLoading.isVisible = false
-                views.matrixToCardUserContentVisibility.isVisible = true
-                views.matrixToCardNameText.setTextOrHide(item.invoke().displayName)
-                views.matrixToCardUserIdText.setTextOrHide(item.invoke().id)
-                avatarRenderer.render(item.invoke(), views.matrixToCardAvatar)
-            }
-            is Fail -> {
-                // TODO display some error copy?
-                dismiss()
-            }
+            is PermalinkData.FallbackLink,
+            is PermalinkData.RoomEmailInviteLink -> Unit
         }
+    }
 
-        when (state.startChattingState) {
-            Uninitialized -> {
-                views.matrixToCardButtonLoading.isVisible = false
-                views.matrixToCardSendMessageButton.isVisible = false
-            }
-            is Success -> {
-                views.matrixToCardButtonLoading.isVisible = false
-                views.matrixToCardSendMessageButton.isVisible = true
-            }
-            is Fail -> {
-                views.matrixToCardButtonLoading.isVisible = false
-                views.matrixToCardSendMessageButton.isVisible = true
-                // TODO display some error copy?
-                dismiss()
-            }
-            is Loading -> {
-                views.matrixToCardButtonLoading.isVisible = true
-                views.matrixToCardSendMessageButton.isInvisible = true
+    private fun showFragment(fragmentClass: KClass<out Fragment>, bundle: Bundle) {
+        if (childFragmentManager.findFragmentByTag(fragmentClass.simpleName) == null) {
+            childFragmentManager.commitTransaction {
+                replace(
+                        views.matrixToCardFragmentContainer.id,
+                        fragmentClass.java,
+                        bundle,
+                        fragmentClass.simpleName
+                )
             }
         }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        views.matrixToCardSendMessageButton.debouncedClicks {
-            withState(viewModel) {
-                it.matrixItem.invoke()?.let { item ->
-                    viewModel.handle(MatrixToAction.StartChattingWithUser(item))
-                }
-            }
-        }
 
         viewModel.observeViewEvents {
             when (it) {
                 is MatrixToViewEvents.NavigateToRoom -> {
-                    interactionListener?.navigateToRoom(it.roomId)
+                    withState(viewModel) { state ->
+                        interactionListener?.mxToBottomSheetNavigateToRoom(it.roomId, state.origin.toViewRoomTrigger())
+                    }
                     dismiss()
                 }
                 MatrixToViewEvents.Dismiss -> dismiss()
+                is MatrixToViewEvents.NavigateToSpace -> {
+                    interactionListener?.mxToBottomSheetSwitchToSpace(it.spaceId)
+                    dismiss()
+                }
+                is MatrixToViewEvents.ShowModalError -> {
+                    MaterialAlertDialogBuilder(requireContext())
+                            .setMessage(it.error)
+                            .setPositiveButton(getString(CommonStrings.ok), null)
+                            .show()
+                }
             }
         }
     }
 
     companion object {
-        fun withLink(matrixToLink: String, listener: InteractionListener?): MatrixToBottomSheet {
+        fun withLink(matrixToLink: String, origin: OriginOfMatrixTo): MatrixToBottomSheet {
             return MatrixToBottomSheet().apply {
-                arguments = Bundle().apply {
-                    putParcelable(MvRx.KEY_ARG, MatrixToArgs(
-                            matrixToLink = matrixToLink
-                    ))
-                }
-                interactionListener = listener
+                setArguments(MatrixToArgs(matrixToLink = matrixToLink, origin = origin))
             }
         }
     }

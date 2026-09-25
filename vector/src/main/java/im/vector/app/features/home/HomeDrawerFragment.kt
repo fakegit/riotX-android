@@ -1,17 +1,8 @@
 /*
- * Copyright 2019 New Vector Ltd
+ * Copyright 2019-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.home
@@ -22,29 +13,38 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.core.app.ActivityOptionsCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
-import im.vector.app.BuildConfig
+import androidx.core.view.updatePadding
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
 import im.vector.app.core.extensions.observeK
 import im.vector.app.core.extensions.replaceChildFragment
 import im.vector.app.core.platform.VectorBaseFragment
+import im.vector.app.core.resources.BuildMeta
 import im.vector.app.core.utils.startSharePlainTextIntent
 import im.vector.app.databinding.FragmentHomeDrawerBinding
-import im.vector.app.features.grouplist.GroupListFragment
+import im.vector.app.features.analytics.plan.MobileScreen
+import im.vector.app.features.permalink.PermalinkFactory
 import im.vector.app.features.settings.VectorPreferences
 import im.vector.app.features.settings.VectorSettingsActivity
+import im.vector.app.features.spaces.SpaceListFragment
 import im.vector.app.features.usercode.UserCodeActivity
 import im.vector.app.features.workers.signout.SignOutUiWorker
-
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.session.Session
 import org.matrix.android.sdk.api.util.toMatrixItem
 import javax.inject.Inject
 
-class HomeDrawerFragment @Inject constructor(
-        private val session: Session,
-        private val vectorPreferences: VectorPreferences,
-        private val avatarRenderer: AvatarRenderer
-) : VectorBaseFragment<FragmentHomeDrawerBinding>() {
+@AndroidEntryPoint
+class HomeDrawerFragment :
+        VectorBaseFragment<FragmentHomeDrawerBinding>() {
+
+    @Inject lateinit var session: Session
+    @Inject lateinit var vectorPreferences: VectorPreferences
+    @Inject lateinit var avatarRenderer: AvatarRenderer
+    @Inject lateinit var buildMeta: BuildMeta
+    @Inject lateinit var permalinkFactory: PermalinkFactory
 
     private lateinit var sharedActionViewModel: HomeSharedActionViewModel
 
@@ -58,9 +58,9 @@ class HomeDrawerFragment @Inject constructor(
         sharedActionViewModel = activityViewModelProvider.get(HomeSharedActionViewModel::class.java)
 
         if (savedInstanceState == null) {
-            replaceChildFragment(R.id.homeDrawerGroupListContainer, GroupListFragment::class.java)
+            replaceChildFragment(R.id.homeDrawerGroupListContainer, SpaceListFragment::class.java)
         }
-        session.getUserLive(session.myUserId).observeK(viewLifecycleOwner) { optionalUser ->
+        session.userService().getUserLive(session.myUserId).observeK(viewLifecycleOwner) { optionalUser ->
             val user = optionalUser?.getOrNull()
             if (user != null) {
                 avatarRenderer.render(user.toMatrixItem(), views.homeDrawerHeaderAvatarView)
@@ -97,24 +97,43 @@ class HomeDrawerFragment @Inject constructor(
         }
 
         views.homeDrawerInviteFriendButton.debouncedClicks {
-            session.permalinkService().createPermalink(sharedActionViewModel.session.myUserId)?.let { permalink ->
-                val text = getString(R.string.invite_friends_text, permalink)
+            permalinkFactory.createPermalinkOfCurrentUser()?.let { permalink ->
+                analyticsTracker.screen(MobileScreen(screenName = MobileScreen.ScreenName.InviteFriends))
+                val text = getString(CommonStrings.invite_friends_text, permalink)
 
                 startSharePlainTextIntent(
-                        fragment = this,
+                        context = requireContext(),
                         activityResultLauncher = null,
-                        chooserTitle = getString(R.string.invite_friends),
+                        chooserTitle = getString(CommonStrings.invite_friends),
                         text = text,
-                        extraTitle = getString(R.string.invite_friends_rich_title)
+                        extraTitle = getString(CommonStrings.invite_friends_rich_title)
                 )
             }
         }
 
+        ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
+            val systemBars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or
+                            WindowInsetsCompat.Type.displayCutout()
+            )
+            v.updatePadding(
+                    systemBars.left,
+                    systemBars.top,
+                    systemBars.right,
+                    systemBars.bottom,
+            )
+            WindowInsetsCompat.CONSUMED
+        }
+
         // Debug menu
-        views.homeDrawerHeaderDebugView.isVisible = BuildConfig.DEBUG && vectorPreferences.developerMode()
         views.homeDrawerHeaderDebugView.debouncedClicks {
             sharedActionViewModel.post(HomeActivitySharedAction.CloseDrawer)
             navigator.openDebug(requireActivity())
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        views.homeDrawerHeaderDebugView.isVisible = buildMeta.isDebug && vectorPreferences.developerMode()
     }
 }

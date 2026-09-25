@@ -1,41 +1,44 @@
 /*
- * Copyright 2018 New Vector Ltd
+ * Copyright 2018-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 package im.vector.app.features.settings
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
+import android.os.Parcelable
+import android.view.View
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
 import im.vector.app.core.extensions.replaceFragment
 import im.vector.app.core.platform.VectorBaseActivity
 import im.vector.app.databinding.ActivityVectorSettingsBinding
+import im.vector.app.features.discovery.DiscoverySettingsFragment
+import im.vector.app.features.navigation.SettingsActivityPayload
 import im.vector.app.features.settings.devices.VectorSettingsDevicesFragment
-
+import im.vector.app.features.settings.notifications.VectorSettingsNotificationFragment
+import im.vector.app.features.settings.threepids.ThreePidsSettingsFragment
+import im.vector.lib.core.utils.compat.getParcelableExtraCompat
+import im.vector.lib.strings.CommonStrings
 import org.matrix.android.sdk.api.failure.GlobalError
 import org.matrix.android.sdk.api.session.Session
 import timber.log.Timber
 import javax.inject.Inject
 
+private const val KEY_ACTIVITY_PAYLOAD = "settings-activity-payload"
+
 /**
  * Displays the client settings.
  */
+@AndroidEntryPoint
 class VectorSettingsActivity : VectorBaseActivity<ActivityVectorSettingsBinding>(),
         PreferenceFragmentCompat.OnPreferenceStartFragmentCallback,
         FragmentManager.OnBackStackChangedListener,
@@ -45,7 +48,10 @@ class VectorSettingsActivity : VectorBaseActivity<ActivityVectorSettingsBinding>
 
     override fun getCoordinatorLayout() = views.coordinatorLayout
 
-    override fun getTitleRes() = R.string.title_activity_settings
+    override val rootView: View
+        get() = views.coordinatorLayout
+
+    override fun getTitleRes() = CommonStrings.title_activity_settings
 
     private var keyToHighlight: String? = null
 
@@ -53,34 +59,42 @@ class VectorSettingsActivity : VectorBaseActivity<ActivityVectorSettingsBinding>
 
     @Inject lateinit var session: Session
 
-    override fun injectWith(injector: ScreenComponent) {
-        injector.inject(this)
-    }
-
     override fun initUiAndData() {
-        configureToolbar(views.settingsToolbar)
+        setupToolbar(views.settingsToolbar)
+                .allowBack()
 
         if (isFirstCreation()) {
             // display the fragment
-            when (intent.getIntExtra(EXTRA_DIRECT_ACCESS, EXTRA_DIRECT_ACCESS_ROOT)) {
-                EXTRA_DIRECT_ACCESS_GENERAL                          ->
-                    replaceFragment(R.id.vector_settings_page, VectorSettingsGeneralFragment::class.java, null, FRAGMENT_TAG)
-                EXTRA_DIRECT_ACCESS_ADVANCED_SETTINGS                ->
-                    replaceFragment(R.id.vector_settings_page, VectorSettingsAdvancedSettingsFragment::class.java, null, FRAGMENT_TAG)
-                EXTRA_DIRECT_ACCESS_SECURITY_PRIVACY                 ->
-                    replaceFragment(R.id.vector_settings_page, VectorSettingsSecurityPrivacyFragment::class.java, null, FRAGMENT_TAG)
-                EXTRA_DIRECT_ACCESS_SECURITY_PRIVACY_MANAGE_SESSIONS ->
-                    replaceFragment(R.id.vector_settings_page,
-                            VectorSettingsDevicesFragment::class.java,
-                            null,
-                            FRAGMENT_TAG)
-                EXTRA_DIRECT_ACCESS_NOTIFICATIONS                    -> {
-                    requestHighlightPreferenceKeyOnResume(VectorPreferences.SETTINGS_ENABLE_THIS_DEVICE_PREFERENCE_KEY)
-                    replaceFragment(R.id.vector_settings_page, VectorSettingsNotificationPreferenceFragment::class.java, null, FRAGMENT_TAG)
-                }
 
-                else                                                 ->
-                    replaceFragment(R.id.vector_settings_page, VectorSettingsRootFragment::class.java, null, FRAGMENT_TAG)
+            when (val payload = readPayload<SettingsActivityPayload>(SettingsActivityPayload.Root)) {
+                SettingsActivityPayload.General ->
+                    replaceFragment(views.vectorSettingsPage, VectorSettingsGeneralFragment::class.java, null, FRAGMENT_TAG)
+                SettingsActivityPayload.AdvancedSettings ->
+                    replaceFragment(views.vectorSettingsPage, VectorSettingsAdvancedSettingsFragment::class.java, null, FRAGMENT_TAG)
+                SettingsActivityPayload.SecurityPrivacy ->
+                    replaceFragment(views.vectorSettingsPage, VectorSettingsSecurityPrivacyFragment::class.java, null, FRAGMENT_TAG)
+                SettingsActivityPayload.SecurityPrivacyManageSessions -> {
+                    val fragmentClass = if (vectorPreferences.isNewSessionManagerEnabled()) {
+                        im.vector.app.features.settings.devices.v2.VectorSettingsDevicesFragment::class.java
+                    } else {
+                        VectorSettingsDevicesFragment::class.java
+                    }
+                    replaceFragment(
+                            views.vectorSettingsPage,
+                            fragmentClass,
+                            null,
+                            FRAGMENT_TAG
+                    )
+                }
+                SettingsActivityPayload.Notifications -> {
+                    requestHighlightPreferenceKeyOnResume(VectorPreferences.SETTINGS_ENABLE_THIS_DEVICE_PREFERENCE_KEY)
+                    replaceFragment(views.vectorSettingsPage, VectorSettingsNotificationFragment::class.java, null, FRAGMENT_TAG)
+                }
+                is SettingsActivityPayload.DiscoverySettings -> {
+                    replaceFragment(views.vectorSettingsPage, DiscoverySettingsFragment::class.java, payload, FRAGMENT_TAG)
+                }
+                else ->
+                    replaceFragment(views.vectorSettingsPage, VectorSettingsRootFragment::class.java, null, FRAGMENT_TAG)
             }
         }
 
@@ -104,7 +118,7 @@ class VectorSettingsActivity : VectorBaseActivity<ActivityVectorSettingsBinding>
                 supportFragmentManager.fragmentFactory.instantiate(classLoader, it)
             }
         } catch (e: Throwable) {
-            showSnackbar(getString(R.string.not_implemented))
+            showSnackbar(getString(CommonStrings.not_implemented))
             Timber.e(e)
             null
         }
@@ -115,7 +129,7 @@ class VectorSettingsActivity : VectorBaseActivity<ActivityVectorSettingsBinding>
             // Replace the existing Fragment with the new Fragment
             supportFragmentManager.beginTransaction()
                     .setCustomAnimations(R.anim.right_in, R.anim.fade_out, R.anim.fade_in, R.anim.right_out)
-                    .replace(R.id.vector_settings_page, oFragment, pref.title.toString())
+                    .replace(views.vectorSettingsPage.id, oFragment, pref.title.toString())
                     .addToBackStack(null)
                     .commit()
             return true
@@ -131,6 +145,10 @@ class VectorSettingsActivity : VectorBaseActivity<ActivityVectorSettingsBinding>
         return keyToHighlight
     }
 
+    override fun navigateToEmailAndPhoneNumbers() {
+        navigateTo(ThreePidsSettingsFragment::class.java)
+    }
+
     override fun handleInvalidToken(globalError: GlobalError.InvalidToken) {
         if (ignoreInvalidTokenError) {
             Timber.w("Ignoring invalid token global error")
@@ -139,19 +157,33 @@ class VectorSettingsActivity : VectorBaseActivity<ActivityVectorSettingsBinding>
         }
     }
 
-    fun <T : Fragment> navigateTo(fragmentClass: Class<T>) {
+    fun <T : Fragment> navigateTo(fragmentClass: Class<T>, arguments: Bundle? = null) {
         supportFragmentManager.beginTransaction()
                 .setCustomAnimations(R.anim.right_in, R.anim.fade_out, R.anim.fade_in, R.anim.right_out)
-                .replace(R.id.vector_settings_page, fragmentClass, null)
+                .replace(views.vectorSettingsPage.id, fragmentClass, arguments)
                 .addToBackStack(null)
                 .commit()
     }
 
     companion object {
-        fun getIntent(context: Context, directAccess: Int) = Intent(context, VectorSettingsActivity::class.java)
-                .apply { putExtra(EXTRA_DIRECT_ACCESS, directAccess) }
+        fun getIntent(context: Context, directAccess: Int) = Companion.getIntent(
+                context, when (directAccess) {
+            EXTRA_DIRECT_ACCESS_ROOT -> SettingsActivityPayload.Root
+            EXTRA_DIRECT_ACCESS_ADVANCED_SETTINGS -> SettingsActivityPayload.AdvancedSettings
+            EXTRA_DIRECT_ACCESS_SECURITY_PRIVACY -> SettingsActivityPayload.SecurityPrivacy
+            EXTRA_DIRECT_ACCESS_SECURITY_PRIVACY_MANAGE_SESSIONS -> SettingsActivityPayload.SecurityPrivacyManageSessions
+            EXTRA_DIRECT_ACCESS_GENERAL -> SettingsActivityPayload.General
+            EXTRA_DIRECT_ACCESS_NOTIFICATIONS -> SettingsActivityPayload.Notifications
+            EXTRA_DIRECT_ACCESS_DISCOVERY_SETTINGS -> SettingsActivityPayload.DiscoverySettings()
+            else -> {
+                Timber.w("Unknown directAccess: $directAccess defaulting to Root")
+                SettingsActivityPayload.Root
+            }
+        }
+        )
 
-        private const val EXTRA_DIRECT_ACCESS = "EXTRA_DIRECT_ACCESS"
+        fun getIntent(context: Context, payload: SettingsActivityPayload) = Intent(context, VectorSettingsActivity::class.java)
+                .applyPayload(payload)
 
         const val EXTRA_DIRECT_ACCESS_ROOT = 0
         const val EXTRA_DIRECT_ACCESS_ADVANCED_SETTINGS = 1
@@ -159,7 +191,16 @@ class VectorSettingsActivity : VectorBaseActivity<ActivityVectorSettingsBinding>
         const val EXTRA_DIRECT_ACCESS_SECURITY_PRIVACY_MANAGE_SESSIONS = 3
         const val EXTRA_DIRECT_ACCESS_GENERAL = 4
         const val EXTRA_DIRECT_ACCESS_NOTIFICATIONS = 5
+        const val EXTRA_DIRECT_ACCESS_DISCOVERY_SETTINGS = 6
 
         private const val FRAGMENT_TAG = "VectorSettingsPreferencesFragment"
     }
+}
+
+private inline fun <reified T : Parcelable> Activity.readPayload(default: T): T {
+    return intent.getParcelableExtraCompat<T>(KEY_ACTIVITY_PAYLOAD) ?: default
+}
+
+private fun <T : Parcelable> Intent.applyPayload(payload: T): Intent {
+    return putExtra(KEY_ACTIVITY_PAYLOAD, payload)
 }

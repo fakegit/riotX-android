@@ -1,55 +1,51 @@
 /*
- * Copyright 2018 New Vector Ltd
+ * Copyright 2018-2024 New Vector Ltd.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
  */
 
 package im.vector.app.features.rageshake
 
+import android.content.Context
+import android.content.Intent
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
 import android.widget.Toast
 import androidx.core.view.isVisible
 import androidx.core.widget.doOnTextChanged
 import com.airbnb.mvrx.viewModel
 import com.airbnb.mvrx.withState
+import dagger.hilt.android.AndroidEntryPoint
 import im.vector.app.R
-import im.vector.app.core.di.ScreenComponent
 import im.vector.app.core.platform.VectorBaseActivity
+import im.vector.app.core.platform.VectorMenuProvider
 import im.vector.app.databinding.ActivityBugReportBinding
-
+import im.vector.lib.strings.CommonStrings
+import org.matrix.android.sdk.api.extensions.tryOrNull
 import timber.log.Timber
-import javax.inject.Inject
 
 /**
- * Form to send a bug report
+ * Form to send a bug report.
  */
-class BugReportActivity : VectorBaseActivity<ActivityBugReportBinding>() {
-
-    override fun injectWith(injector: ScreenComponent) {
-        injector.inject(this)
-    }
+@AndroidEntryPoint
+class BugReportActivity :
+        VectorBaseActivity<ActivityBugReportBinding>(),
+        VectorMenuProvider {
 
     override fun getBinding() = ActivityBugReportBinding.inflate(layoutInflater)
 
-    @Inject lateinit var bugReportViewModelFactory: BugReportViewModel.Factory
-
     private val viewModel: BugReportViewModel by viewModel()
 
-    private var forSuggestion: Boolean = false
+    override val rootView: View
+        get() = views.mainRoot
+
+    private var reportType: ReportType = ReportType.BUG_REPORT
 
     override fun initUiAndData() {
-        configureToolbar(views.bugReportToolbar)
+        setupToolbar(views.bugReportToolbar)
+                .allowBack()
         setupViews()
 
         if (bugReporter.screenshot != null) {
@@ -60,30 +56,60 @@ class BugReportActivity : VectorBaseActivity<ActivityBugReportBinding>() {
             views.bugReportButtonIncludeScreenshot.isEnabled = false
         }
 
-        forSuggestion = intent.getBooleanExtra("FOR_SUGGESTION", false)
+        reportType = intent.getStringExtra(REPORT_TYPE_EXTRA)?.let {
+            tryOrNull { ReportType.valueOf(it) }
+        } ?: ReportType.BUG_REPORT
 
         // Default screen is for bug report, so modify it for suggestion
-        if (forSuggestion) {
-            supportActionBar?.setTitle(R.string.send_suggestion)
+        when (reportType) {
+            ReportType.BUG_REPORT -> {
+                supportActionBar?.setTitle(CommonStrings.title_activity_bug_report)
+                views.bugReportButtonContactMe.isVisible = true
+            }
+            ReportType.SUGGESTION -> {
+                supportActionBar?.setTitle(CommonStrings.send_suggestion)
 
-            views.bugReportFirstText.setText(R.string.send_suggestion_content)
-            views.bugReportTextInputLayout.hint = getString(R.string.send_suggestion_report_placeholder)
+                views.bugReportFirstText.setText(CommonStrings.send_suggestion_content)
+                views.bugReportTextInputLayout.hint = getString(CommonStrings.send_suggestion_report_placeholder)
+                views.bugReportButtonContactMe.isVisible = true
 
-            views.bugReportLogsDescription.isVisible = false
+                hideBugReportOptions()
+            }
+            ReportType.SPACE_BETA_FEEDBACK -> {
+                supportActionBar?.setTitle(CommonStrings.send_feedback_space_title)
 
-            views.bugReportButtonIncludeLogs.isChecked = false
-            views.bugReportButtonIncludeLogs.isVisible = false
+                views.bugReportFirstText.setText(CommonStrings.send_feedback_space_info)
+                views.bugReportTextInputLayout.hint = getString(CommonStrings.feedback)
+                views.bugReportButtonContactMe.isVisible = true
 
-            views.bugReportButtonIncludeCrashLogs.isChecked = false
-            views.bugReportButtonIncludeCrashLogs.isVisible = false
+                hideBugReportOptions()
+            }
+            ReportType.THREADS_BETA_FEEDBACK -> {
+                supportActionBar?.setTitle(CommonStrings.send_feedback_threads_title)
 
-            views.bugReportButtonIncludeKeyShareHistory.isChecked = false
-            views.bugReportButtonIncludeKeyShareHistory.isVisible = false
+                views.bugReportFirstText.setText(CommonStrings.send_feedback_threads_info)
+                views.bugReportTextInputLayout.hint = getString(CommonStrings.feedback)
+                views.bugReportButtonContactMe.isVisible = true
 
-            // Keep the screenshot
-        } else {
-            supportActionBar?.setTitle(R.string.title_activity_bug_report)
+                hideBugReportOptions()
+            }
+            else -> {
+                // other types not supported here
+            }
         }
+    }
+
+    private fun hideBugReportOptions() {
+        views.bugReportLogsDescription.isVisible = false
+
+        views.bugReportButtonIncludeLogs.isChecked = false
+        views.bugReportButtonIncludeLogs.isVisible = false
+
+        views.bugReportButtonIncludeCrashLogs.isChecked = false
+        views.bugReportButtonIncludeCrashLogs.isVisible = false
+
+        views.bugReportButtonIncludeKeyShareHistory.isChecked = false
+        views.bugReportButtonIncludeKeyShareHistory.isVisible = false
     }
 
     private fun setupViews() {
@@ -93,33 +119,31 @@ class BugReportActivity : VectorBaseActivity<ActivityBugReportBinding>() {
 
     override fun getMenuRes() = R.menu.bug_report
 
-    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+    override fun handlePrepareMenu(menu: Menu) {
         menu.findItem(R.id.ic_action_send_bug_report)?.let {
             val isValid = !views.bugReportMaskView.isVisible
 
             it.isEnabled = isValid
-            it.icon.alpha = if (isValid) 255 else 100
+            it.icon?.alpha = if (isValid) 255 else 100
         }
-
-        return super.onPrepareOptionsMenu(menu)
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        when (item.itemId) {
+    override fun handleMenuItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
             R.id.ic_action_send_bug_report -> {
                 if (views.bugReportEditText.text.toString().trim().length >= 10) {
                     sendBugReport()
                 } else {
-                    views.bugReportTextInputLayout.error = getString(R.string.bug_report_error_too_short)
+                    views.bugReportTextInputLayout.error = getString(CommonStrings.bug_report_error_too_short)
                 }
-                return true
+                true
             }
+            else -> false
         }
-        return super.onOptionsItemSelected(item)
     }
 
     /**
-     * Send the bug report
+     * Send the bug report.
      */
     private fun sendBugReport() = withState(viewModel) { state ->
         views.bugReportScrollview.alpha = 0.3f
@@ -128,29 +152,47 @@ class BugReportActivity : VectorBaseActivity<ActivityBugReportBinding>() {
         invalidateOptionsMenu()
 
         views.bugReportProgressTextView.isVisible = true
-        views.bugReportProgressTextView.text = getString(R.string.send_bug_report_progress, "0")
+        views.bugReportProgressTextView.text = getString(CommonStrings.send_bug_report_progress, "0")
 
         views.bugReportProgressView.isVisible = true
         views.bugReportProgressView.progress = 0
 
-        bugReporter.sendBugReport(this,
-                forSuggestion,
+        bugReporter.sendBugReport(
+                reportType,
                 views.bugReportButtonIncludeLogs.isChecked,
                 views.bugReportButtonIncludeCrashLogs.isChecked,
                 views.bugReportButtonIncludeKeyShareHistory.isChecked,
                 views.bugReportButtonIncludeScreenshot.isChecked,
                 views.bugReportEditText.text.toString(),
                 state.serverVersion,
+                views.bugReportButtonContactMe.isChecked,
+                null,
                 object : BugReporter.IMXBugReportListener {
                     override fun onUploadFailed(reason: String?) {
                         try {
                             if (!reason.isNullOrEmpty()) {
-                                if (forSuggestion) {
-                                    Toast.makeText(this@BugReportActivity,
-                                            getString(R.string.send_suggestion_failed, reason), Toast.LENGTH_LONG).show()
-                                } else {
-                                    Toast.makeText(this@BugReportActivity,
-                                            getString(R.string.send_bug_report_failed, reason), Toast.LENGTH_LONG).show()
+                                when (reportType) {
+                                    ReportType.BUG_REPORT -> {
+                                        Toast.makeText(
+                                                this@BugReportActivity,
+                                                getString(CommonStrings.send_bug_report_failed, reason), Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                    ReportType.SUGGESTION -> {
+                                        Toast.makeText(
+                                                this@BugReportActivity,
+                                                getString(CommonStrings.send_suggestion_failed, reason), Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                    ReportType.SPACE_BETA_FEEDBACK -> {
+                                        Toast.makeText(
+                                                this@BugReportActivity,
+                                                getString(CommonStrings.feedback_failed, reason), Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                    else -> {
+                                        // nop
+                                    }
                                 }
                             }
                         } catch (e: Exception) {
@@ -173,15 +215,24 @@ class BugReportActivity : VectorBaseActivity<ActivityBugReportBinding>() {
                         val myProgress = progress.coerceIn(0, 100)
 
                         views.bugReportProgressView.progress = myProgress
-                        views.bugReportProgressTextView.text = getString(R.string.send_bug_report_progress, myProgress.toString())
+                        views.bugReportProgressTextView.text = getString(CommonStrings.send_bug_report_progress, myProgress.toString())
                     }
 
-                    override fun onUploadSucceed() {
+                    override fun onUploadSucceed(reportUrl: String?) {
                         try {
-                            if (forSuggestion) {
-                                Toast.makeText(this@BugReportActivity, R.string.send_suggestion_sent, Toast.LENGTH_LONG).show()
-                            } else {
-                                Toast.makeText(this@BugReportActivity, R.string.send_bug_report_sent, Toast.LENGTH_LONG).show()
+                            when (reportType) {
+                                ReportType.BUG_REPORT -> {
+                                    Toast.makeText(this@BugReportActivity, CommonStrings.send_bug_report_sent, Toast.LENGTH_LONG).show()
+                                }
+                                ReportType.SUGGESTION -> {
+                                    Toast.makeText(this@BugReportActivity, CommonStrings.send_suggestion_sent, Toast.LENGTH_LONG).show()
+                                }
+                                ReportType.SPACE_BETA_FEEDBACK -> {
+                                    Toast.makeText(this@BugReportActivity, CommonStrings.feedback_sent, Toast.LENGTH_LONG).show()
+                                }
+                                else -> {
+                                    // nop
+                                }
                             }
                         } catch (e: Exception) {
                             Timber.e(e, "## onUploadSucceed() : failed to dismiss the toast")
@@ -205,13 +256,23 @@ class BugReportActivity : VectorBaseActivity<ActivityBugReportBinding>() {
     }
 
     private fun onSendScreenshotChanged() {
-        views.bugReportScreenshotPreview.isVisible = views.bugReportButtonIncludeScreenshot.isChecked && bugReporter.screenshot != null
+        views.bugReportScreenshotPreview.isVisible = bugReporter.screenshot != null
     }
 
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
         // Ensure there is no crash status remaining, which will be sent later on by mistake
-        bugReporter.deleteCrashFile(this)
-
+        bugReporter.deleteCrashFile()
         super.onBackPressed()
+    }
+
+    companion object {
+        private const val REPORT_TYPE_EXTRA = "REPORT_TYPE_EXTRA"
+
+        fun intent(context: Context, reportType: ReportType): Intent {
+            return Intent(context, BugReportActivity::class.java).apply {
+                putExtra(REPORT_TYPE_EXTRA, reportType.name)
+            }
+        }
     }
 }

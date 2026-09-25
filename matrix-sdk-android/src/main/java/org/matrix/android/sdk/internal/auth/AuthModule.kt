@@ -23,16 +23,16 @@ import dagger.Provides
 import io.realm.RealmConfiguration
 import org.matrix.android.sdk.api.auth.AuthenticationService
 import org.matrix.android.sdk.api.auth.HomeServerHistoryService
-import org.matrix.android.sdk.api.legacy.LegacySessionImporter
 import org.matrix.android.sdk.internal.auth.db.AuthRealmMigration
 import org.matrix.android.sdk.internal.auth.db.AuthRealmModule
 import org.matrix.android.sdk.internal.auth.db.RealmPendingSessionStore
 import org.matrix.android.sdk.internal.auth.db.RealmSessionParamsStore
 import org.matrix.android.sdk.internal.auth.login.DefaultDirectLoginTask
+import org.matrix.android.sdk.internal.auth.login.DefaultQrLoginTokenTask
 import org.matrix.android.sdk.internal.auth.login.DirectLoginTask
+import org.matrix.android.sdk.internal.auth.login.QrLoginTokenTask
 import org.matrix.android.sdk.internal.database.RealmKeysUtils
 import org.matrix.android.sdk.internal.di.AuthDatabase
-import org.matrix.android.sdk.internal.legacy.DefaultLegacySessionImporter
 import org.matrix.android.sdk.internal.wellknown.WellknownModule
 import java.io.File
 
@@ -46,7 +46,11 @@ internal abstract class AuthModule {
         @JvmStatic
         @Provides
         @AuthDatabase
-        fun providesRealmConfiguration(context: Context, realmKeysUtils: RealmKeysUtils): RealmConfiguration {
+        fun providesRealmConfiguration(
+                context: Context,
+                realmKeysUtils: RealmKeysUtils,
+                authRealmMigration: AuthRealmMigration
+        ): RealmConfiguration {
             val old = File(context.filesDir, "matrix-sdk-auth")
             if (old.exists()) {
                 old.renameTo(File(context.filesDir, "matrix-sdk-auth.realm"))
@@ -58,14 +62,11 @@ internal abstract class AuthModule {
                     }
                     .name("matrix-sdk-auth.realm")
                     .modules(AuthRealmModule())
-                    .schemaVersion(AuthRealmMigration.SCHEMA_VERSION)
-                    .migration(AuthRealmMigration)
+                    .schemaVersion(authRealmMigration.schemaVersion)
+                    .migration(authRealmMigration)
                     .build()
         }
     }
-
-    @Binds
-    abstract fun bindLegacySessionImporter(importer: DefaultLegacySessionImporter): LegacySessionImporter
 
     @Binds
     abstract fun bindSessionParamsStore(store: RealmSessionParamsStore): SessionParamsStore
@@ -80,6 +81,9 @@ internal abstract class AuthModule {
     abstract fun bindSessionCreator(creator: DefaultSessionCreator): SessionCreator
 
     @Binds
+    abstract fun bindSessionParamsCreator(creator: DefaultSessionParamsCreator): SessionParamsCreator
+
+    @Binds
     abstract fun bindDirectLoginTask(task: DefaultDirectLoginTask): DirectLoginTask
 
     @Binds
@@ -87,4 +91,7 @@ internal abstract class AuthModule {
 
     @Binds
     abstract fun bindHomeServerHistoryService(service: DefaultHomeServerHistoryService): HomeServerHistoryService
+
+    @Binds
+    abstract fun bindQrLoginTokenTask(task: DefaultQrLoginTokenTask): QrLoginTokenTask
 }
